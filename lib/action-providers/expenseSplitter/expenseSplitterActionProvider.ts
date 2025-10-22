@@ -22,7 +22,6 @@ import {
   formatExpensesList,
   formatBalances,
   calculateBalances,
-  validateExpenseParticipants,
 } from "./ledger";
 import {
   computeNetBalances,

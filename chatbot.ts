@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-import { Agent as XMTPAgent, type MessageContext, type AgentMiddleware } from "@xmtp/agent-sdk";
+import { Agent as XMTPAgent, type MessageContext, type AgentMiddleware, IdentifierKind, GroupMember } from "@xmtp/agent-sdk";
 import {
   TransactionReferenceCodec,
   ContentTypeTransactionReference,
@@ -21,10 +21,14 @@ import {
   ensureLocalStorage, 
   getConversationSession,
   saveConversationSession,
+  initializeConversationSession,
+  updateSessionMembers,
 } from "./lib/session-manager";
 import { sendSingleTransaction, sendMultipleTransactions } from "./lib/transaction-handler";
 import { validateEnvironment } from "./lib/environment";
 import { USDC_ADDRESSES } from "./lib/constants";
+import { MemorySaver } from "@langchain/langgraph";
+import { dumpMemory } from "./lib/utils";
 
 // Initialize environment variables
 dotenv.config();
@@ -32,7 +36,11 @@ dotenv.config();
 // Separate agent instances for DMs and groups (initialized once at startup)
 let dmAgent: Agent;
 let groupAgent: Agent;
+let dmMemory: MemorySaver;
+let groupMemory: MemorySaver;
 
+// Cache of active thread IDs (cleared on restart)
+const activeThreadsCache = new Set<string>();
 
 /**
  * Process a message and detect if it contains a prepared transaction.
@@ -58,7 +66,6 @@ async function processMessage(
         console.log("AGENT:", chunk.agent.messages[0].content + "\n");
         const content = String(chunk.agent.messages[0].content);
         response += content + "\n";
-      // Check for tool outputs 
       } else if ("tools" in chunk && chunk.tools?.messages) {
         console.log("TOOL:", chunk.tools.messages[0].content + "\n");
         for (const toolMessage of chunk.tools.messages) {
@@ -116,26 +123,18 @@ async function handleMessage(ctx: MessageContext) {
     console.log(`\n📨 Message from ${senderInboxId.slice(0, 8)}...: ${messageContent}`);
     console.log(`   Context: ${isGroup ? 'Group' : 'DM'} (thread: ${threadId.slice(0, 8)}...)`);
     
-    // Check if this is first message in thread (need to set conversation context)
-    const session = getConversationSession(threadId, isGroup);
-    const isFirstMessage = !session;
+    // Check if thread is already loaded in this session (cache cleared on restart)
+    if (!activeThreadsCache.has(threadId)) {
+      // Not in cache - initialize/refresh session from XMTP
+      await initializeConversationSession(ctx, threadId, isGroup);
+      activeThreadsCache.add(threadId);
+    }
     
-    // Update/create session
-    if (!session) {
-      saveConversationSession(threadId, isGroup, {
-        conversationId,
-        conversationType: isGroup ? "group" : "dm",
-        participants: [{ inboxId: senderInboxId, ethereumAddress: senderAddress }],
-        lastSeen: new Date(),
-      });
-    } else {
-      // Update existing session
-      const participant = session.participants.find(p => p.inboxId === senderInboxId);
-      if (!participant) {
-        session.participants.push({ inboxId: senderInboxId, ethereumAddress: senderAddress });
-      } else {
-        participant.ethereumAddress = senderAddress;
-      }
+    // Get session data (now guaranteed to exist)
+    const session = getConversationSession(threadId, isGroup);
+    
+    // Update lastSeen timestamp
+    if (session) {
       session.lastSeen = new Date();
       saveConversationSession(threadId, isGroup, session);
     }
@@ -143,12 +142,14 @@ async function handleMessage(ctx: MessageContext) {
     // Build messages array
     const messages: BaseMessage[] = [];
     
-    // Add conversation context ONCE (only for first message in thread)
-    if (isFirstMessage) {
-      messages.push(new SystemMessage(
-        buildConversationContext(conversationId, isGroup)
-      ));
-    }
+    // Always add conversation context (agent memory is separate from session storage)
+    messages.push(new SystemMessage(
+      buildConversationContext(conversationId, isGroup, session ? {
+        groupName: session.groupName,
+        groupDescription: session.groupDescription,
+        groupImageUrl: session.groupImageUrl,
+      } : undefined)
+    ));
        
     // Append sender context to message
     messages.push(new HumanMessage(buildSenderContext(senderInboxId, senderAddress) + messageContent));
@@ -161,6 +162,13 @@ async function handleMessage(ctx: MessageContext) {
     const config = { configurable: { thread_id: threadId } };
     const result = await processMessage(selectedAgent, config, messages);
     
+    try {
+      const mem = isGroup ? groupMemory : dmMemory;
+      //await dumpMemory(mem, threadId);
+    } catch (e) {
+      console.warn("Failed to dump MemorySaver:", e);
+    }
+
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
       await sendMultipleTransactions(ctx, result.multiTransactionPrepared, result.response);
@@ -211,12 +219,15 @@ async function main(): Promise<void> {
 
   // Initialize both agent types at startup
   console.log("🤖 Initializing agents...");
-  const { agent: initializedDmAgent } = await initializeAgent("dm");
+  const { agent: initializedDmAgent, memory: initializedDmMemory } = await initializeAgent("dm");
   dmAgent = initializedDmAgent;
+  dmMemory = initializedDmMemory;
+
   console.log("✅ DM agent ready");
   
-  const { agent: initializedGroupAgent } = await initializeAgent("group");
+  const { agent: initializedGroupAgent, memory: initializedGroupMemory } = await initializeAgent("group");
   groupAgent = initializedGroupAgent;
+  groupMemory = initializedGroupMemory;
   console.log("✅ Group agent ready\n");
 
   // Create XMTP agent with transaction codecs
@@ -230,7 +241,85 @@ async function main(): Promise<void> {
 
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {
+    const members = await ctx.conversation.members(); 
+
+    const plain = members.map((m: GroupMember) => ({
+      inboxId: m.inboxId,
+      installationIds: [...m.installationIds],
+      permissionLevel: m.permissionLevel,
+      consentState: m.consentState,
+      accountIdentifiers: m.accountIdentifiers.map((id: IdentifierKind) => ({
+        identifierKind: IdentifierKind[id.identifierKind] ?? id.identifierKind,
+        identifier: id.identifier,
+      })),
+    }));
+    
+    console.log(JSON.stringify(plain, null, 2));
+
     await handleMessage(ctx);
+  });
+
+  // Handle group updates (member changes and metadata changes)
+  xmtpAgent.on("group-update", async (ctx) => {
+    try {
+      const conversationId = ctx.conversation.id;
+      const threadId = conversationId; // Groups use conversationId as threadId
+      const content = ctx.message.content as any;
+
+      console.log(`\n🔄 Group update for ${conversationId.slice(0, 8)}...`);
+      console.log(`   Update content:`, JSON.stringify(content, null, 2));
+
+      // Check if we have this group in cache
+      const session = getConversationSession(threadId, true);
+      
+      if (!session) {
+        console.log(`   Group not in cache, initializing...`);
+        await initializeConversationSession(ctx, threadId, true);
+        activeThreadsCache.add(threadId);
+        return;
+      }
+
+      // Handle metadata changes
+      if (content.metadataFieldChanges && Array.isArray(content.metadataFieldChanges)) {
+        for (const change of content.metadataFieldChanges) {
+          console.log(`   Metadata change: ${change.fieldName} = "${change.newValue}"`);
+          
+          if (change.fieldName === "group_name") {
+            session.groupName = change.newValue;
+          } else if (change.fieldName === "group_description") {
+            session.groupDescription = change.newValue;
+          } else if (change.fieldName === "group_image_url_square") {
+            session.groupImageUrl = change.newValue;
+          }
+        }
+      }
+
+      // Handle member additions
+      if (content.addedInboxes && Array.isArray(content.addedInboxes)) {
+        console.log(`   Members added: ${content.addedInboxes.length}`);
+        await updateSessionMembers(ctx, threadId);
+      }
+
+      // Handle member removals
+      if (content.removedInboxes && Array.isArray(content.removedInboxes)) {
+        console.log(`   Members removed: ${content.removedInboxes.length}`);
+        
+        // Remove from participants list
+        for (const removed of content.removedInboxes) {
+          session.participants = session.participants.filter(
+            p => p.inboxId !== removed.inboxId
+          );
+        }
+      }
+
+      // Save updated session
+      session.lastSeen = new Date();
+      saveConversationSession(threadId, true, session);
+      
+      console.log(`   ✅ Session updated`);
+    } catch (error) {
+      console.error("Error handling group update:", error);
+    }
   });
 
   // Log when agent starts

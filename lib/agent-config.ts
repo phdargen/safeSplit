@@ -11,6 +11,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { ReadOnlyEvmWalletProvider } from "./wallet-providers";
 import { erc20ActionProvider, expenseSplitterActionProvider } from "./action-providers";
 import { USDC_ADDRESSES } from "./constants";
+import { SystemMessage } from "@langchain/core/messages";
 
 export type Agent = ReturnType<typeof createReactAgent>;
 
@@ -113,16 +114,32 @@ Be clear, concise, and always remind users they control their funds.`;
  */
 export function buildConversationContext(
   conversationId: string,
-  isGroup: boolean
+  isGroup: boolean,
+  groupMetadata?: {
+    groupName?: string;
+    groupDescription?: string;
+    groupImageUrl?: string;
+  }
 ): string {
   const contextType = isGroup ? "group chat" : "direct message";
   
-  return `Conversation Context (constant for this thread):
+  let context = `Conversation Context (constant for this thread):
 - Type: ${contextType}
-- Conversation ID: ${conversationId}
+- Conversation ID: ${conversationId}`;
 
-For all tool calls in this conversation:
+  if (isGroup && groupMetadata) {
+    if (groupMetadata.groupName) {
+      context += `\n- Group Name: ${groupMetadata.groupName}`;
+    }
+    if (groupMetadata.groupDescription) {
+      context += `\n- Group Description: ${groupMetadata.groupDescription}`;
+    }
+  }
+
+  context += `\n\nFor all tool calls in this conversation:
 ${isGroup ? `- Use groupId="${conversationId}" for expense operations` : '- This is a DM, expense operations are not available'}`;
+
+  return context;
 }
 
 /**
@@ -132,9 +149,7 @@ export function buildSenderContext(
   senderInboxId: string,
   senderAddress: string
 ): string {
-  return `Current sender: ${senderInboxId} (${senderAddress})
-
-For tool calls: use address="${senderAddress}", userAddress="${senderAddress}", payerInboxId="${senderInboxId}", payerAddress="${senderAddress}"`;
+  return `Message from senderId ${senderInboxId} with address ${senderAddress}:`;
 }
 
 /**
@@ -142,7 +157,7 @@ For tool calls: use address="${senderAddress}", userAddress="${senderAddress}", 
  * The agent prepares transactions but never executes them.
  * Creates separate agent instances for DM and group conversations.
  */
-export async function initializeAgent(conversationType: ConversationType): Promise<{ agent: Agent }> {
+export async function initializeAgent(conversationType: ConversationType): Promise<{ agent: Agent; memory: MemorySaver }> {
   try {
     console.log(`Creating ${conversationType} agent instance...`);
 
@@ -199,10 +214,10 @@ export async function initializeAgent(conversationType: ConversationType): Promi
       llm,
       tools,
       checkpointSaver: memory,
-      messageModifier: systemPrompt,
+      prompt: new SystemMessage(systemPrompt),
     });
 
-    return { agent };
+    return { agent, memory };
   } catch (error) {
     console.error(`Failed to initialize ${conversationType} agent:`, error);
     throw error;
