@@ -161,6 +161,7 @@ export interface Settlement {
 /**
  * Response type for multi-transaction preparation.
  * This structured format allows the chatbot to detect and process prepared settlements.
+ * Each settlement represents one payer with potentially multiple payment calls batched together.
  */
 export interface MultiTransactionPrepared {
   /**
@@ -174,7 +175,8 @@ export interface MultiTransactionPrepared {
   description: string;
 
   /**
-   * Array of settlements with transaction data for each payer.
+   * Array of settlements grouped by payer.
+   * Each settlement contains all transactions for one payer (batched together).
    */
   settlements: Array<{
     /**
@@ -188,17 +190,7 @@ export interface MultiTransactionPrepared {
     fromAddress: string;
 
     /**
-     * Ethereum address of the recipient.
-     */
-    toAddress: string;
-
-    /**
-     * Amount to transfer.
-     */
-    amount: string;
-
-    /**
-     * Currency for the transfer.
+     * Currency for the transfers.
      */
     currency: string;
 
@@ -208,24 +200,26 @@ export interface MultiTransactionPrepared {
     description: string;
 
     /**
-     * Transaction call data.
+     * Array of transaction calls for this payer (batched).
+     * Each call represents a payment to a different recipient.
      */
-    call: {
+    calls: Array<{
       to: string;
       data: string;
       value: string;
-    };
+    }>;
 
     /**
-     * Metadata about the transfer.
+     * Metadata about each transfer (one per call).
      */
-    metadata: {
+    metadata: Array<{
+      description?: string;
       tokenAddress: string;
       amount: string;
       destinationAddress: string;
       tokenName?: string;
       tokenDecimals?: number;
-    };
+    }>;
   }>;
 }
 

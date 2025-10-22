@@ -106,7 +106,7 @@ export async function initializeAgent(conversationType: ConversationType): Promi
     console.log(`Creating ${conversationType} agent instance...`);
 
     const llm = new ChatOpenAI({
-      model: "gpt-4o-mini",
+      model: process.env.LLM_MODEL || "gpt-4o-mini",
     });
 
     // Derive agent's wallet address from private key (for RPC access only)

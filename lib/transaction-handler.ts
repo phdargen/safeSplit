@@ -139,34 +139,39 @@ export async function sendMultipleTransactions(
         version: "1.0",
         from: settlement.fromAddress as `0x${string}`,
         chainId: chainId,
-        calls: [{
-          to: settlement.call.to as `0x${string}`,
-          data: settlement.call.data as `0x${string}`,
-          value: settlement.call.value as `0x${string}`,
+        calls: settlement.calls.map((call, index) => ({
+          to: call.to as `0x${string}`,
+          data: call.data as `0x${string}`,
+          value: call.value as `0x${string}`,
           metadata: {
-            description: settlement.description,
+            description: settlement.metadata[index].description || settlement.description,
             transactionType: "settlement",
             currency: settlement.currency,
-            amount: settlement.amount, 
-            decimals: settlement.metadata.tokenDecimals?.toString() || "6",
-            toAddress: settlement.toAddress,
-            tokenAddress: settlement.metadata.tokenAddress,
+            amount: settlement.metadata[index].amount, 
+            decimals: settlement.metadata[index].tokenDecimals?.toString() || "6",
+            toAddress: settlement.metadata[index].destinationAddress,
+            tokenAddress: settlement.metadata[index].tokenAddress,
           },
-        }],
+        })),
         capabilities: {
           paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL } as unknown as string,
         } as const,
       };
 
-      // Send transaction request via DM
-      await dm.send(walletSendCalls, ContentTypeWalletSendCalls);
-      
+      // Build details about payments
+      const paymentDetails = settlement.calls.length === 1
+        ? `to ${settlement.metadata[0].destinationAddress.slice(0, 6)}...${settlement.metadata[0].destinationAddress.slice(-4)}`
+        : `to ${settlement.calls.length} recipients`;
+
       // Send explanatory message
       await dm.send(
-        `💸 Settlement Transaction\n\n${settlement.description}\n\n💡 Please approve this transaction in your wallet to complete the settlement.`
+        `💸 Settlement Transaction\n\n${settlement.description}\n\nPayment ${paymentDetails}\n\n💡 Please approve this transaction in your wallet to complete the settlement.`
       );
 
-      console.log(`✅ Sent settlement transaction to ${settlement.fromInboxId.slice(0, 8)}... via DM`);
+      // Send transaction request via DM
+      await dm.send(walletSendCalls, ContentTypeWalletSendCalls);
+
+      console.log(`✅ Sent ${settlement.calls.length} batched settlement call(s) to ${settlement.fromInboxId.slice(0, 8)}... via DM`);
     } catch (error) {
       console.error(`Error sending settlement to ${settlement.fromInboxId}:`, error);
       failedDMs.push(settlement);
@@ -180,31 +185,36 @@ export async function sendMultipleTransactions(
         version: "1.0",
         from: settlement.fromAddress as `0x${string}`,
         chainId: chainId,
-        calls: [{
-          to: settlement.call.to as `0x${string}`,
-          data: settlement.call.data as `0x${string}`,
-          value: settlement.call.value as `0x${string}`,
+        calls: settlement.calls.map((call, index) => ({
+          to: call.to as `0x${string}`,
+          data: call.data as `0x${string}`,
+          value: call.value as `0x${string}`,
           metadata: {
-            description: settlement.description,
+            description: settlement.metadata[index].description || settlement.description,
             transactionType: "settlement",
             currency: settlement.currency,
-            amount: settlement.amount,
-            decimals: settlement.metadata.tokenDecimals?.toString() || "6",
-            toAddress: settlement.toAddress,
-            tokenAddress: settlement.metadata.tokenAddress,
+            amount: settlement.metadata[index].amount,
+            decimals: settlement.metadata[index].tokenDecimals?.toString() || "6",
+            toAddress: settlement.metadata[index].destinationAddress,
+            tokenAddress: settlement.metadata[index].tokenAddress,
           },
-        }],
+        })),
       };
+
+      // Build details about payments
+      const paymentDetails = settlement.calls.length === 1
+        ? `to ${settlement.metadata[0].destinationAddress.slice(0, 6)}...${settlement.metadata[0].destinationAddress.slice(-4)}`
+        : `to ${settlement.calls.length} recipients`;
+
+      // Send explanatory message
+      await ctx.sendText(
+        `💸 Settlement for ${settlement.fromAddress.slice(0, 6)}...${settlement.fromAddress.slice(-4)}\n\n${settlement.description}\n\nPayment ${paymentDetails}\n\n💡 Please approve this transaction in your wallet to complete the settlement.`
+      );
 
       // Send transaction request in group chat
       await ctx.conversation.send(walletSendCalls, ContentTypeWalletSendCalls);
-      
-      // Send explanatory message
-      await ctx.sendText(
-        `💸 Settlement for ${settlement.fromAddress.slice(0, 6)}...${settlement.fromAddress.slice(-4)}\n\n${settlement.description}\n\n💡 Please approve this transaction in your wallet to complete the settlement.`
-      );
 
-      console.log(`✅ Sent settlement transaction to ${settlement.fromAddress.slice(0, 8)}... in group chat`);
+      console.log(`✅ Sent ${settlement.calls.length} batched settlement call(s) to ${settlement.fromAddress.slice(0, 8)}... in group chat`);
     } catch (error) {
       console.error(`Error sending settlement in group for ${settlement.fromAddress}:`, error);
       await ctx.sendText(

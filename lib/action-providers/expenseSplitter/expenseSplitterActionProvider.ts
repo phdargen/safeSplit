@@ -209,7 +209,14 @@ async function getBalances(
     const balances = calculateBalances(ledger.expenses);
     const formatted = formatBalances(balances, ledger.currency);
 
-    return `📊 Balances for ledger "${ledger.name}":\n\n${formatted}`;
+    // Debug info
+    let debugInfo = `\n\n🐛 DEBUG:\n  Ledger participants: ${ledger.participants.length}\n  Expenses: ${ledger.expenses.length}`;
+    for (let i = 0; i < ledger.expenses.length; i++) {
+      const exp = ledger.expenses[i];
+      debugInfo += `\n  Expense ${i + 1}: ${exp.amount} split among ${exp.participantInboxIds.length} people`;
+    }
+
+    return `📊 Balances for ledger "${ledger.name}":\n\n${formatted}${debugInfo}`;
   } catch (error) {
     return `Error calculating balances: ${error}`;
   }
@@ -277,20 +284,41 @@ async function settleExpenses(
       tokenDetails.decimals
     );
 
-    // Build the multi-transaction response
+    // Group transactions by sender (fromInboxId) to batch calls
+    const settlementsByPayer = new Map<string, typeof transactions>();
+    for (const tx of transactions) {
+      const existing = settlementsByPayer.get(tx.settlement.fromInboxId);
+      if (existing) {
+        existing.push(tx);
+      } else {
+        settlementsByPayer.set(tx.settlement.fromInboxId, [tx]);
+      }
+    }
+
+    // Build the multi-transaction response with batched calls per payer
+    const batchedSettlements = Array.from(settlementsByPayer.values()).map(txs => {
+      const firstTx = txs[0];
+      const totalAmount = txs.reduce((sum, tx) => sum + parseFloat(tx.settlement.amount), 0);
+      
+      return {
+        fromInboxId: firstTx.settlement.fromInboxId,
+        fromAddress: firstTx.settlement.fromAddress,
+        currency: firstTx.settlement.currency,
+        description: txs.length === 1
+          ? firstTx.settlement.description
+          : `Settlement: ${txs.length} payments totaling ${formatCurrency(totalAmount.toString(), firstTx.settlement.currency)}`,
+        calls: txs.map(tx => tx.call),
+        metadata: txs.map(tx => ({
+          ...tx.metadata,
+          description: tx.settlement.description, // Preserve individual description
+        })),
+      };
+    });
+
     const response: MultiTransactionPrepared = {
       type: "MULTI_TRANSACTION_PREPARED",
-      description: `Settlement for ledger "${ledger.name}" - ${settlements.length} transfer(s)`,
-      settlements: transactions.map(tx => ({
-        fromInboxId: tx.settlement.fromInboxId,
-        fromAddress: tx.settlement.fromAddress,
-        toAddress: tx.settlement.toAddress,
-        amount: tx.settlement.amount,
-        currency: tx.settlement.currency,
-        description: tx.settlement.description,
-        call: tx.call,
-        metadata: tx.metadata,
-      })),
+      description: `Settlement for ledger "${ledger.name}" - ${batchedSettlements.length} payer(s), ${settlements.length} transfer(s)`,
+      settlements: batchedSettlements,
     };
 
     // Return JSON that will be detected by the chatbot
