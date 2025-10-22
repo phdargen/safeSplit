@@ -153,7 +153,6 @@ async function handleMessage(ctx: MessageContext) {
        
     // Append sender context to message
     messages.push(new HumanMessage(buildSenderContext(senderInboxId, senderAddress) + messageContent));
-    console.log("messages", messages);
     
     // Select appropriate agent based on conversation type
     const selectedAgent = isGroup ? groupAgent : dmAgent;
@@ -162,12 +161,12 @@ async function handleMessage(ctx: MessageContext) {
     const config = { configurable: { thread_id: threadId } };
     const result = await processMessage(selectedAgent, config, messages);
     
-    try {
-      const mem = isGroup ? groupMemory : dmMemory;
-      //await dumpMemory(mem, threadId);
-    } catch (e) {
-      console.warn("Failed to dump MemorySaver:", e);
-    }
+    // try {
+    //   const mem = isGroup ? groupMemory : dmMemory;
+    //   //await dumpMemory(mem, threadId);
+    // } catch (e) {
+    //   console.warn("Failed to dump MemorySaver:", e);
+    // }
 
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
@@ -241,21 +240,6 @@ async function main(): Promise<void> {
 
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {
-    const members = await ctx.conversation.members(); 
-
-    const plain = members.map((m: GroupMember) => ({
-      inboxId: m.inboxId,
-      installationIds: [...m.installationIds],
-      permissionLevel: m.permissionLevel,
-      consentState: m.consentState,
-      accountIdentifiers: m.accountIdentifiers.map((id: IdentifierKind) => ({
-        identifierKind: IdentifierKind[id.identifierKind] ?? id.identifierKind,
-        identifier: id.identifier,
-      })),
-    }));
-    
-    console.log(JSON.stringify(plain, null, 2));
-
     await handleMessage(ctx);
   });
 

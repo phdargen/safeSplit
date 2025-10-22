@@ -44,9 +44,10 @@ export const AddExpenseSchema = z
     description: z
       .string()
       .describe("Description of what the expense was for (e.g., 'beer', 'dinner', 'hotel')"),
-    senderInboxId: z
+    payerAddress: z
       .string()
-      .describe("Inbox ID of the message sender (the person who paid). This is provided in the message context."),
+      .regex(/^0x[a-fA-F0-9]{40}$/i, "Invalid Ethereum address format")
+      .describe("Ethereum address of the person who paid for this expense. Can be any participant in the ledger."),
     participantAddresses: z
       .array(z.string().regex(/^0x[a-fA-F0-9]{40}$/i, "Invalid Ethereum address format"))
       .optional()

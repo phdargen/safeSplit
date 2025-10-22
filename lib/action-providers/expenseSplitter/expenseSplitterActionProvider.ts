@@ -28,7 +28,7 @@ import {
   optimizeSettlements,
   prepareSettlementTransactions,
 } from "./settlement";
-import { getSenderInfo, getGroupMembers } from "../xmtp/utils";
+import { getGroupMembers } from "../xmtp/utils";
 
 /**
  * Create a new expense ledger in a group.
@@ -55,7 +55,7 @@ async function createExpenseLedger(
       participants
     );
 
-    return `✅ Created ledger "${ledger.name}" (ID: ${ledger.id.slice(0, 8)}...)\nParticipants: ${participants.length} group members\nCurrency: ${ledger.currency}`;
+    return `✅ Created ledger "${ledger.name}" (ID: ${ledger.id})\nParticipants: ${participants.length} group members\nCurrency: ${ledger.currency}`;
   } catch (error) {
     return `Error creating ledger: ${error}`;
   }
@@ -108,8 +108,13 @@ async function addExpense(
     // Validate amount
     const amount = parseAmount(args.amount);
 
-    // Get sender (payer) information
-    const sender = await getSenderInfo(args.senderInboxId, args.groupId);
+    // Get payer information by address
+    const normalizedPayerAddress = args.payerAddress.toLowerCase();
+    const payer = ledger.participants.find(p => p.address === normalizedPayerAddress);
+    
+    if (!payer) {
+      return `Error: Address ${args.payerAddress} is not a participant in this ledger`;
+    }
 
     // Determine participants for this expense
     let participantInboxIds: string[];
@@ -143,8 +148,8 @@ async function addExpense(
     const expense: Expense = {
       id: generateId(),
       ledgerId: args.ledgerId,
-      payerInboxId: sender.inboxId,
-      payerAddress: sender.address,
+      payerInboxId: payer.inboxId,
+      payerAddress: payer.address,
       amount,
       description: args.description,
       participantInboxIds,
@@ -158,7 +163,7 @@ async function addExpense(
       ? `${participantInboxIds.length} people (${args.participantAddresses.map(a => a.slice(0, 6)).join(", ")}...)`
       : `all ${participantInboxIds.length} participants`;
 
-    return `✅ Added expense: ${formatCurrency(amount, ledger.currency)} for "${args.description}"\nPaid by: ${sender.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
+    return `✅ Added expense: ${formatCurrency(amount, ledger.currency)} for "${args.description}"\nPaid by: ${payer.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
   } catch (error) {
     return `Error adding expense: ${error}`;
   }
@@ -249,8 +254,8 @@ async function settleExpenses(
       ? { address: args.tokenAddress as `0x${string}`, decimals: 6 }
       : getUSDCDetails(networkId);
 
-    // Compute balances
-    const balances = computeNetBalances(ledger.expenses);
+    // Compute balances (pass participants to ensure all addresses are resolved)
+    const balances = computeNetBalances(ledger.expenses, ledger.participants);
 
     // Check if everyone is settled
     const hasImbalance = balances.some(b => Math.abs(parseFloat(b.netAmount)) > 0.01);
@@ -341,14 +346,15 @@ export const expenseSplitterActionProvider = () => {
       - ledgerId: The ledger ID to add the expense to
       - amount: The amount of the expense as a string (e.g., "10.5", "100")
       - description: What the expense was for (e.g., "beer", "dinner", "hotel")
-      - senderInboxId: The inbox ID of the message sender (who paid). This is provided in the message context.
+      - payerAddress: Ethereum address of the person who paid for this expense (can be any ledger participant)
       - participantAddresses: Optional array of Ethereum addresses for people sharing this expense
       
-      The payer is ALWAYS the message sender (senderInboxId).
+      The payer can be anyone in the ledger, not just the message sender.
+      This allows scenarios like "Alice says: Bob paid for dinner" where Alice is the sender but Bob is the payer.
       If participantAddresses is not provided, the expense is split equally among all ledger participants.
       If participantAddresses is provided, the expense is split only among those specific people.
       
-      Use this when users report an expense they paid.
+      Use this when users report an expense (whether they paid or someone else paid).
       `,
       schema: AddExpenseSchema,
       invoke: addExpense,

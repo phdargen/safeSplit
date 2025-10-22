@@ -18,18 +18,15 @@ let xmtpClient: Awaited<ReturnType<typeof XMTPAgent.createFromEnv>>['client'] | 
  */
 export async function getXmtpClient(): Promise<Awaited<ReturnType<typeof XMTPAgent.createFromEnv>>['client']> {
   if (xmtpClient) {
-    console.log("♻️  Reusing existing XMTP client");
     return xmtpClient;
   }
 
-  console.log("🔧 Creating new XMTP client...");
   try {
     const xmtpAgent = await XMTPAgent.createFromEnv({
       env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
     });
 
     xmtpClient = xmtpAgent.client;
-    console.log("✅ XMTP client initialized successfully");
     return xmtpClient;
   } catch (error) {
     console.error("❌ Failed to create XMTP client:", error);

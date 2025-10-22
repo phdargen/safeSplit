@@ -9,23 +9,28 @@ import { compareAmounts, subtractAmounts, formatCurrency } from "./utils";
 /**
  * Compute net balances from expenses.
  */
-export function computeNetBalances(expenses: Expense[]): Balance[] {
+export function computeNetBalances(
+  expenses: Expense[],
+  participants: Array<{ inboxId: string; address: string }>
+): Balance[] {
   const balancesMap = calculateBalances(expenses);
   
   const balances: Balance[] = [];
   for (const [inboxId, netAmount] of balancesMap.entries()) {
-    // Find the address for this inboxId from expenses
+    // Find the address for this inboxId from participants
     let address = "";
-    for (const expense of expenses) {
-      if (expense.payerInboxId === inboxId) {
-        address = expense.payerAddress;
-        break;
-      }
-      const participantIndex = expense.participantInboxIds.indexOf(inboxId);
-      if (participantIndex !== -1) {
-        // For participants, we'll need to look up their address separately
-        // For now, we'll leave it empty and let the caller fill it in
-        break;
+    
+    // First try to find in participants array (most reliable)
+    const participant = participants.find(p => p.inboxId === inboxId);
+    if (participant) {
+      address = participant.address;
+    } else {
+      // Fallback: try to find in expenses (for edge cases)
+      for (const expense of expenses) {
+        if (expense.payerInboxId === inboxId) {
+          address = expense.payerAddress;
+          break;
+        }
       }
     }
 
@@ -140,7 +145,7 @@ export function prepareSettlementTransactions(
 
   for (const settlement of settlements) {
     // Convert amount to token units using correct decimals
-    const amountInUnits = parseUnits(settlement.amount, decimals);
+    const amountInUnits = parseUnits(settlement.amount, decimals)/ BigInt(100); // TO DO: remove this divide by 100, only for testing
 
     // Encode the transfer function call
     const transferData = encodeFunctionData({

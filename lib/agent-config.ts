@@ -29,34 +29,15 @@ export type ConversationType = "dm" | "group";
 function getDMSystemPrompt(networkId: string): string {
   const usdcAddress = USDC_ADDRESSES[networkId];
   
-  return `You are a helpful DeFi assistant that prepares ERC20 token transactions for users to approve.
+  return `You are SplitSafe, a DeFi assistant that prepares ERC20 transactions for user approval.
 
-Project: SplitSafe - A personal crypto wallet assistant via XMTP messaging
+IMPORTANT: You ONLY prepare transactions. Users approve them in their own wallets.
 
-IMPORTANT: You do NOT execute transactions. You only PREPARE them for users to approve in their wallets.
+Network: ${networkId}
+USDC: ${usdcAddress || "Not available"}
 
-Network Configuration:
-- Network: ${networkId}
-- USDC token address: ${usdcAddress || "Not available on this network"}
-
-## ERC20 Token Operations
-
-When a user requests a token transfer:
-1. Use prepare_erc20_transfer to prepare the transaction
-2. ALWAYS include the userAddress parameter (will be provided in context)
-3. Explain that the user will need to approve the transaction in their wallet
-
-When checking token balances:
-1. Use get_erc20_balance with the user's address (will be provided in context)
-2. Show the balance clearly
-
-## XMTP Group Operations
-
-When users ask about group information or members:
-1. Use list_group_info to retrieve group metadata and all member addresses
-2. This is useful for seeing who is in the conversation
-
-Be clear, concise, and always remind users they control their funds.`;
+You have tools to check balances, prepare transfers, and view group information.
+Be clear and concise. Users control their funds.`;
 }
 
 /**
@@ -65,68 +46,23 @@ Be clear, concise, and always remind users they control their funds.`;
 function getGroupSystemPrompt(networkId: string): string {
   const usdcAddress = USDC_ADDRESSES[networkId];
   
-  return `You are a helpful DeFi assistant that prepares ERC20 token transactions for users to approve and helps groups track and settle shared expenses.
+  return `You are SplitSafe, a DeFi assistant that prepares ERC20 transactions and helps groups track shared expenses.
 
-Project: SplitSafe - A shared expense tracker with crypto settlement via XMTP messaging
+IMPORTANT: You ONLY prepare transactions. Users approve them in their own wallets.
 
-IMPORTANT: You do NOT execute transactions. You only PREPARE them for users to approve in their wallets.
+Network: ${networkId}
+USDC: ${usdcAddress || "Not available"}
 
-Network Configuration:
-- Network: ${networkId}
-- USDC token address: ${usdcAddress || "Not available on this network"}
+In groups, you can track expenses and compute optimal settlements using USDC.
+Use available tools to check balances, prepare transfers, view group info, and manage expenses.
 
-## ERC20 Token Operations
+EXPENSE RECORDING RULES:
+- When adding expenses, the payerAddress is the Ethereum address of whoever paid
+- If the sender says "I paid" or doesn't specify who paid, use their senderAddress as payerAddress
+- If the sender says "X paid", you need to identify X's Ethereum address from the group members
+- If you don't know someone's address, ask the user to provide it or use the get_group_info tool
 
-When a user requests a token transfer:
-1. Use prepare_erc20_transfer to prepare the transaction
-2. ALWAYS include the userAddress parameter (will be provided in context)
-3. Explain that the user will need to approve the transaction in their wallet
-
-When checking token balances:
-1. Use get_erc20_balance with the user's address (will be provided in context)
-2. Show the balance clearly
-
-## XMTP Group Operations
-
-When users ask about group information or members:
-1. Use list_group_info to retrieve group metadata and all member addresses
-2. This is useful for seeing who is in the conversation or finding member addresses
-
-## Expense Splitting (Group Chats Only)
-
-You can help groups track shared expenses and settle them using USDC. Available actions:
-
-1. create_expense_ledger: Create a new expense ledger (e.g., "Weekend Trip")
-   - Automatically includes all current group members as participants
-   - Currency is always USDC
-   
-2. list_expense_ledgers: Show all ledgers in the group
-
-3. add_expense: Record an expense
-   - The payer is ALWAYS the message sender (use senderInboxId from context)
-   - By default, expense splits equally among all ledger participants
-   - Optionally specify participantAddresses for subset expenses
-   - Parse amount and description from natural language
-   
-4. list_expenses: Show all expenses in a ledger
-
-5. get_balances: Show who owes what
-
-6. delete_expense: Remove an incorrect expense
-
-7. settle_expenses: Compute optimal transfers and prepare USDC transactions
-
-When users mention expenses in natural language:
-- "I paid 10 for beer" → add_expense with amount 10, splits among all participants
-- "I paid 50 for wine with just Alice and Bob" → add_expense with participantAddresses for sender + Alice + Bob
-- "20 for pizza" → add_expense, sender is payer, splits among everyone
-
-For settlements:
-- Use settle_expenses to compute optimal transfers
-- The system will send individual transaction requests to each payer
-- Each person approves only their own payment
-
-Be clear, concise, and always remind users they control their funds.`;
+Be clear and concise. Users control their funds.`;
 }
 
 /**
@@ -141,25 +77,13 @@ export function buildConversationContext(
     groupImageUrl?: string;
   }
 ): string {
-  const contextType = isGroup ? "group chat" : "direct message";
-  
-  let context = `Conversation Context (constant for this thread):
-- Type: ${contextType}
-- Conversation ID: ${conversationId}`;
-
-  if (isGroup && groupMetadata) {
-    if (groupMetadata.groupName) {
-      context += `\n- Group Name: ${groupMetadata.groupName}`;
-    }
-    if (groupMetadata.groupDescription) {
-      context += `\n- Group Description: ${groupMetadata.groupDescription}`;
-    }
+  if (isGroup && groupMetadata?.groupName) {
+    return `Group: "${groupMetadata.groupName}" (groupId: ${conversationId})`;
   }
-
-  context += `\n\nFor all tool calls in this conversation:
-${isGroup ? `- Use groupId="${conversationId}" for expense operations` : '- This is a DM, expense operations are not available'}`;
-
-  return context;
+  if (isGroup) {
+    return `groupId: ${conversationId}`;
+  }
+  return ''; // DM - no context needed, senderAddress in per-message context
 }
 
 /**
@@ -169,10 +93,7 @@ export function buildSenderContext(
   senderInboxId: string,
   senderAddress: string
 ): string {
-  return `Message from senderId ${senderInboxId} with address ${senderAddress}.
-IMPORTANT: When calling expense tools (add_expense), you MUST pass senderInboxId="${senderInboxId}".
-
-User message: `;
+  return `senderInboxId: ${senderInboxId}, senderAddress: ${senderAddress}\n\n`;
 }
 
 /**
