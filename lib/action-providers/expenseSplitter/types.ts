@@ -78,6 +78,14 @@ export interface ExpenseLedger {
   groupId: string;
 
   /**
+   * Participants in this ledger (snapshot of group members at creation).
+   */
+  participants: Array<{
+    inboxId: string;
+    address: string;
+  }>;
+
+  /**
    * Array of expenses in this ledger.
    */
   expenses: Expense[];

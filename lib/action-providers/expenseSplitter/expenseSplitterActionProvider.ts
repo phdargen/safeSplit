@@ -28,6 +28,7 @@ import {
   optimizeSettlements,
   prepareSettlementTransactions,
 } from "./settlement";
+import { getSenderInfo, getGroupMembers } from "../xmtp/utils";
 
 /**
  * Create a new expense ledger in a group.
@@ -38,14 +39,23 @@ async function createExpenseLedger(
 ): Promise<string> {
   try {
     const ledgerId = generateId();
+    
+    // Fetch all group members automatically
+    const participants = await getGroupMembers(args.groupId);
+    
+    if (participants.length === 0) {
+      return `Error: No members found in group ${args.groupId}`;
+    }
+
     const ledger = await createLedger(
       args.groupId,
       ledgerId,
       args.ledgerName,
-      args.currency || "USDC"
+      "USDC",
+      participants
     );
 
-    return `✅ Created ledger "${ledger.name}" (ID: ${ledger.id.slice(0, 8)}...) in group ${args.groupId.slice(0, 8)}...\nCurrency: ${ledger.currency}`;
+    return `✅ Created ledger "${ledger.name}" (ID: ${ledger.id.slice(0, 8)}...)\nParticipants: ${participants.length} group members\nCurrency: ${ledger.currency}`;
   } catch (error) {
     return `Error creating ledger: ${error}`;
   }
@@ -98,42 +108,57 @@ async function addExpense(
     // Validate amount
     const amount = parseAmount(args.amount);
 
-    // Validate participants if provided
-    if (args.participantInboxIds && args.participantInboxIds.length === 0) {
-      return `Error: Participant list cannot be empty`;
+    // Get sender (payer) information
+    const sender = await getSenderInfo(args.senderInboxId, args.groupId);
+
+    // Determine participants for this expense
+    let participantInboxIds: string[];
+    
+    if (args.participantAddresses && args.participantAddresses.length > 0) {
+      // Subset of participants specified by addresses
+      const normalizedAddresses = args.participantAddresses.map(addr => addr.toLowerCase());
+      
+      // Validate all addresses exist in ledger participants
+      const invalidAddresses = normalizedAddresses.filter(
+        addr => !ledger.participants.some(p => p.address === addr)
+      );
+      
+      if (invalidAddresses.length > 0) {
+        return `Error: The following addresses are not participants in this ledger: ${invalidAddresses.join(", ")}`;
+      }
+      
+      // Convert addresses to inboxIds
+      participantInboxIds = ledger.participants
+        .filter(p => normalizedAddresses.includes(p.address))
+        .map(p => p.inboxId);
+    } else {
+      // Default to all ledger participants
+      participantInboxIds = ledger.participants.map(p => p.inboxId);
     }
 
-    // Validate weights if provided
-    if (args.weights) {
-      if (!args.participantInboxIds) {
-        return `Error: Cannot specify weights without specifying participants`;
-      }
-      if (args.weights.length !== args.participantInboxIds.length) {
-        return `Error: Weights array must match participants array length`;
-      }
+    if (participantInboxIds.length === 0) {
+      return `Error: No valid participants for this expense`;
     }
 
     const expense: Expense = {
       id: generateId(),
       ledgerId: args.ledgerId,
-      payerInboxId: args.payerInboxId,
-      payerAddress: args.payerAddress,
+      payerInboxId: sender.inboxId,
+      payerAddress: sender.address,
       amount,
       description: args.description,
-      participantInboxIds: args.participantInboxIds || [args.payerInboxId],
-      weights: args.weights,
+      participantInboxIds,
       timestamp: Date.now(),
       currency: ledger.currency,
     };
 
     await addExpenseToStorage(args.groupId, args.ledgerId, expense);
 
-    const participantInfo = args.participantInboxIds
-      ? `${args.participantInboxIds.length} people`
-      : "payer only";
-    const weightInfo = args.weights ? ` (weights: ${args.weights.join(":")})` : "";
+    const participantInfo = args.participantAddresses
+      ? `${participantInboxIds.length} people (${args.participantAddresses.map(a => a.slice(0, 6)).join(", ")}...)`
+      : `all ${participantInboxIds.length} participants`;
 
-    return `✅ Added expense: ${formatCurrency(amount, ledger.currency)} for "${args.description}"\nPaid by: ${args.payerInboxId.slice(0, 8)}...\nSplit among: ${participantInfo}${weightInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
+    return `✅ Added expense: ${formatCurrency(amount, ledger.currency)} for "${args.description}"\nPaid by: ${sender.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
   } catch (error) {
     return `Error adding expense: ${error}`;
   }
@@ -284,7 +309,9 @@ export const expenseSplitterActionProvider = () => {
       It takes the following inputs:
       - groupId: The XMTP group ID where this ledger will be created
       - ledgerName: A human-readable name for the ledger (e.g., "Weekend Trip", "Monthly Dinners")
-      - currency: Optional currency for the ledger (defaults to USDC)
+      
+      The ledger automatically includes all current group members as participants.
+      Currency is always USDC.
       
       Use this when users want to start tracking expenses for a specific event or period.
       `,
@@ -314,12 +341,14 @@ export const expenseSplitterActionProvider = () => {
       - ledgerId: The ledger ID to add the expense to
       - amount: The amount of the expense as a string (e.g., "10.5", "100")
       - description: What the expense was for (e.g., "beer", "dinner", "hotel")
-      - payerInboxId: Inbox ID of who paid (defaults to message sender)
-      - payerAddress: Ethereum address of who paid
-      - participantInboxIds: Optional array of inbox IDs sharing this expense (defaults to all group members)
-      - weights: Optional array of weights for proportional splitting (e.g., [2, 1, 1] for 2:1:1 split)
+      - senderInboxId: The inbox ID of the message sender (who paid). This is provided in the message context.
+      - participantAddresses: Optional array of Ethereum addresses for people sharing this expense
       
-      Use this when users report an expense they paid or someone else paid.
+      The payer is ALWAYS the message sender (senderInboxId).
+      If participantAddresses is not provided, the expense is split equally among all ledger participants.
+      If participantAddresses is provided, the expense is split only among those specific people.
+      
+      Use this when users report an expense they paid.
       `,
       schema: AddExpenseSchema,
       invoke: addExpense,

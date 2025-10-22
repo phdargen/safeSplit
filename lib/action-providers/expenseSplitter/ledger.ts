@@ -18,13 +18,10 @@ export function formatExpensesList(expenses: Expense[], currency: string): strin
   for (const expense of expenses) {
     const date = new Date(expense.timestamp).toLocaleDateString();
     const participantCount = expense.participantInboxIds.length;
-    const weightsInfo = expense.weights 
-      ? ` (weights: ${expense.weights.join(":")})` 
-      : "";
     
     output += `• ${formatCurrency(expense.amount, expense.currency)} - ${expense.description}\n`;
-    output += `  Paid by: ${expense.payerInboxId.slice(0, 8)}...\n`;
-    output += `  Split among: ${participantCount} people${weightsInfo}\n`;
+    output += `  Paid by: ${expense.payerAddress.slice(0, 8)}...\n`;
+    output += `  Split among: ${participantCount} people\n`;
     output += `  Date: ${date}\n`;
     output += `  ID: ${expense.id.slice(0, 8)}\n\n`;
 

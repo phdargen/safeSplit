@@ -47,7 +47,8 @@ export async function createLedger(
   groupId: string,
   ledgerId: string,
   ledgerName: string,
-  currency: string = "USDC"
+  currency: string = "USDC",
+  participants: Array<{ inboxId: string; address: string }> = []
 ): Promise<ExpenseLedger> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
@@ -57,6 +58,7 @@ export async function createLedger(
     id: ledgerId,
     name: ledgerName,
     groupId,
+    participants,
     expenses: [],
     createdAt: Date.now(),
     currency,

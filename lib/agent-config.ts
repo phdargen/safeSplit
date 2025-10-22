@@ -9,7 +9,7 @@ import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { ChatOpenAI } from "@langchain/openai";
 import { privateKeyToAccount } from "viem/accounts";
 import { ReadOnlyEvmWalletProvider } from "./wallet-providers";
-import { erc20ActionProvider, expenseSplitterActionProvider } from "./action-providers";
+import { erc20ActionProvider, expenseSplitterActionProvider, xmtpActionProvider } from "./action-providers";
 import { USDC_ADDRESSES } from "./constants";
 import { SystemMessage } from "@langchain/core/messages";
 
@@ -50,6 +50,12 @@ When checking token balances:
 1. Use get_erc20_balance with the user's address (will be provided in context)
 2. Show the balance clearly
 
+## XMTP Group Operations
+
+When users ask about group information or members:
+1. Use list_group_info to retrieve group metadata and all member addresses
+2. This is useful for seeing who is in the conversation
+
 Be clear, concise, and always remind users they control their funds.`;
 }
 
@@ -80,26 +86,40 @@ When checking token balances:
 1. Use get_erc20_balance with the user's address (will be provided in context)
 2. Show the balance clearly
 
+## XMTP Group Operations
+
+When users ask about group information or members:
+1. Use list_group_info to retrieve group metadata and all member addresses
+2. This is useful for seeing who is in the conversation or finding member addresses
+
 ## Expense Splitting (Group Chats Only)
 
 You can help groups track shared expenses and settle them using USDC. Available actions:
 
-1. create_expense_ledger: Create a new expense ledger for tracking (e.g., "Weekend Trip")
+1. create_expense_ledger: Create a new expense ledger (e.g., "Weekend Trip")
+   - Automatically includes all current group members as participants
+   - Currency is always USDC
+   
 2. list_expense_ledgers: Show all ledgers in the group
+
 3. add_expense: Record an expense
-   - Extract payer from context (defaults to sender)
+   - The payer is ALWAYS the message sender (use senderInboxId from context)
+   - By default, expense splits equally among all ledger participants
+   - Optionally specify participantAddresses for subset expenses
    - Parse amount and description from natural language
-   - Identify participants (defaults to all group members)
-   - Support proportional weights (e.g., "split 2:1:1")
+   
 4. list_expenses: Show all expenses in a ledger
+
 5. get_balances: Show who owes what
+
 6. delete_expense: Remove an incorrect expense
+
 7. settle_expenses: Compute optimal transfers and prepare USDC transactions
 
 When users mention expenses in natural language:
-- "I paid 10 for beer" → add_expense with sender as payer, amount 10
-- "Alice paid 20 for pizza with Bob and Carol" → add_expense with Alice as payer, Bob and Carol as participants
-- "100 for dinner split 2:1:1 between Alice, Bob, and Carol" → add_expense with weights [2,1,1]
+- "I paid 10 for beer" → add_expense with amount 10, splits among all participants
+- "I paid 50 for wine with just Alice and Bob" → add_expense with participantAddresses for sender + Alice + Bob
+- "20 for pizza" → add_expense, sender is payer, splits among everyone
 
 For settlements:
 - Use settle_expenses to compute optimal transfers
@@ -149,7 +169,10 @@ export function buildSenderContext(
   senderInboxId: string,
   senderAddress: string
 ): string {
-  return `Message from senderId ${senderInboxId} with address ${senderAddress}:`;
+  return `Message from senderId ${senderInboxId} with address ${senderAddress}.
+IMPORTANT: When calling expense tools (add_expense), you MUST pass senderInboxId="${senderInboxId}".
+
+User message: `;
 }
 
 /**
@@ -185,10 +208,12 @@ export async function initializeAgent(conversationType: ConversationType): Promi
       ? [
           ...erc20ActionProvider(), 
           ...expenseSplitterActionProvider(),
+          ...xmtpActionProvider(),
           pythActionProvider()
         ]
       : [
           ...erc20ActionProvider(),
+          ...xmtpActionProvider(),
           pythActionProvider()
         ];
 
