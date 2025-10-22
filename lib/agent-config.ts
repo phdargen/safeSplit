@@ -20,10 +20,42 @@ export interface AgentConfig {
   };
 }
 
+export type ConversationType = "dm" | "group";
+
 /**
- * Get static system prompt (used in messageModifier, never changes)
+ * Get system prompt for DM conversations (ERC20 operations only)
  */
-function getStaticSystemPrompt(networkId: string): string {
+function getDMSystemPrompt(networkId: string): string {
+  const usdcAddress = USDC_ADDRESSES[networkId];
+  
+  return `You are a helpful DeFi assistant that prepares ERC20 token transactions for users to approve.
+
+Project: SplitSafe - A personal crypto wallet assistant via XMTP messaging
+
+IMPORTANT: You do NOT execute transactions. You only PREPARE them for users to approve in their wallets.
+
+Network Configuration:
+- Network: ${networkId}
+- USDC token address: ${usdcAddress || "Not available on this network"}
+
+## ERC20 Token Operations
+
+When a user requests a token transfer:
+1. Use prepare_erc20_transfer to prepare the transaction
+2. ALWAYS include the userAddress parameter (will be provided in context)
+3. Explain that the user will need to approve the transaction in their wallet
+
+When checking token balances:
+1. Use get_erc20_balance with the user's address (will be provided in context)
+2. Show the balance clearly
+
+Be clear, concise, and always remind users they control their funds.`;
+}
+
+/**
+ * Get system prompt for group conversations (ERC20 + expense splitting)
+ */
+function getGroupSystemPrompt(networkId: string): string {
   const usdcAddress = USDC_ADDRESSES[networkId];
   
   return `You are a helpful DeFi assistant that prepares ERC20 token transactions for users to approve and helps groups track and settle shared expenses.
@@ -108,11 +140,11 @@ For tool calls: use address="${senderAddress}", userAddress="${senderAddress}", 
 /**
  * Initialize the agent with read-only wallet provider.
  * The agent prepares transactions but never executes them.
- * This is called ONCE at startup and creates a single agent instance for all conversations.
+ * Creates separate agent instances for DM and group conversations.
  */
-export async function initializeAgent(): Promise<{ agent: Agent }> {
+export async function initializeAgent(conversationType: ConversationType): Promise<{ agent: Agent }> {
   try {
-    console.log("Creating shared agent instance...");
+    console.log(`Creating ${conversationType} agent instance...`);
 
     const llm = new ChatOpenAI({
       model: "gpt-4o-mini",
@@ -133,35 +165,46 @@ export async function initializeAgent(): Promise<{ agent: Agent }> {
       address: agentAddress,
     });
 
-    // Initialize AgentKit with action providers
+    // Initialize AgentKit with appropriate action providers based on conversation type
+    const actionProviders = conversationType === "group" 
+      ? [
+          ...erc20ActionProvider(), 
+          ...expenseSplitterActionProvider(),
+          pythActionProvider()
+        ]
+      : [
+          ...erc20ActionProvider(),
+          pythActionProvider()
+        ];
+
     const agentkit = await AgentKit.from({
       walletProvider,
-      actionProviders: [
-        ...erc20ActionProvider(), 
-        ...expenseSplitterActionProvider(),
-        pythActionProvider()
-      ],
+      actionProviders,
     });
 
     const tools = await getLangChainTools(agentkit);
 
-    // Single memory instance for all threads
+    // Separate memory instance for each conversation type
     const memory = new MemorySaver();
 
     const networkId = process.env.NETWORK_ID || "base-sepolia";
 
-    // Create the agent with static system prompt
+    // Select appropriate system prompt based on conversation type
+    const systemPrompt = conversationType === "group" 
+      ? getGroupSystemPrompt(networkId)
+      : getDMSystemPrompt(networkId);
+
+    // Create the agent with type-specific system prompt
     const agent = createReactAgent({
       llm,
       tools,
       checkpointSaver: memory,
-      messageModifier: getStaticSystemPrompt(networkId),
+      messageModifier: systemPrompt,
     });
 
-    // Return agent with empty thread_id (set per message)
     return { agent };
   } catch (error) {
-    console.error("Failed to initialize agent:", error);
+    console.error(`Failed to initialize ${conversationType} agent:`, error);
     throw error;
   }
 }

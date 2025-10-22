@@ -15,7 +15,7 @@ import {
   buildConversationContext, 
   buildSenderContext,
   type Agent, 
-  type AgentConfig 
+  type AgentConfig,
 } from "./lib/agent-config";
 import { 
   ensureLocalStorage, 
@@ -29,8 +29,9 @@ import { USDC_ADDRESSES } from "./lib/constants";
 // Initialize environment variables
 dotenv.config();
 
-// Shared agent instance (initialized once at startup)
-let agent: Agent;
+// Separate agent instances for DMs and groups (initialized once at startup)
+let dmAgent: Agent;
+let groupAgent: Agent;
 
 
 /**
@@ -149,13 +150,16 @@ async function handleMessage(ctx: MessageContext) {
       ));
     }
        
-    // Adppend sender context to message
+    // Append sender context to message
     messages.push(new HumanMessage(buildSenderContext(senderInboxId, senderAddress) + messageContent));
     console.log("messages", messages);
     
+    // Select appropriate agent based on conversation type
+    const selectedAgent = isGroup ? groupAgent : dmAgent;
+    
     // Process with agent and specific thread
     const config = { configurable: { thread_id: threadId } };
-    const result = await processMessage(agent, config, messages);
+    const result = await processMessage(selectedAgent, config, messages);
     
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
@@ -164,7 +168,7 @@ async function handleMessage(ctx: MessageContext) {
       await sendSingleTransaction(ctx, result.transactionPrepared, senderAddress, result.response);
     } else {
       await ctx.sendText(result.response);
-      console.log(`✅ Response: ${result.response}`);
+      console.log(`✅ Response from ${isGroup ? "group" : "DM"} agent: ${result.response}`);
     }
   } catch (error) {
     console.error("Error handling message:", error);
@@ -205,11 +209,15 @@ async function main(): Promise<void> {
   validateEnvironment();
   ensureLocalStorage();
 
-  // Initialize agent ONCE at startup
-  console.log("🤖 Initializing agent...");
-  const { agent: initializedAgent } = await initializeAgent();
-  agent = initializedAgent;
-  console.log("✅ Agent ready\n");
+  // Initialize both agent types at startup
+  console.log("🤖 Initializing agents...");
+  const { agent: initializedDmAgent } = await initializeAgent("dm");
+  dmAgent = initializedDmAgent;
+  console.log("✅ DM agent ready");
+  
+  const { agent: initializedGroupAgent } = await initializeAgent("group");
+  groupAgent = initializedGroupAgent;
+  console.log("✅ Group agent ready\n");
 
   // Create XMTP agent with transaction codecs
   const xmtpAgent = await XMTPAgent.createFromEnv({
