@@ -65,8 +65,8 @@ export async function createLedger(
   const ledgerKey = getLedgerKey(groupId, ledgerId);
   const ledgersListKey = getLedgersListKey(groupId);
 
-  // Store the ledger
-  await redis.set(ledgerKey, JSON.stringify(ledger));
+  // Store the ledger (Upstash Redis handles JSON serialization automatically)
+  await redis.set(ledgerKey, ledger);
 
   // Add ledger ID to the group's ledger list
   await redis.sadd(ledgersListKey, ledgerId);
@@ -86,13 +86,13 @@ export async function getLedger(
   }
 
   const ledgerKey = getLedgerKey(groupId, ledgerId);
-  const data = await redis.get<string>(ledgerKey);
+  const data = await redis.get<ExpenseLedger>(ledgerKey);
 
   if (!data) {
     return null;
   }
 
-  return JSON.parse(data) as ExpenseLedger;
+  return data;
 }
 
 /**
@@ -141,7 +141,7 @@ export async function addExpense(
   ledger.expenses.push(expense);
 
   const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, JSON.stringify(ledger));
+  await redis.set(ledgerKey, ledger);
 
   return ledger;
 }
@@ -171,7 +171,7 @@ export async function deleteExpense(
   }
 
   const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, JSON.stringify(ledger));
+  await redis.set(ledgerKey, ledger);
 
   return ledger;
 }
@@ -205,7 +205,7 @@ export async function updateExpense(
   };
 
   const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, JSON.stringify(ledger));
+  await redis.set(ledgerKey, ledger);
 
   return ledger;
 }

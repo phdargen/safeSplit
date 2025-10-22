@@ -4,7 +4,7 @@
 import { encodeFunctionData, erc20Abi, parseUnits, Hex } from "viem";
 import { Settlement, Balance, Expense } from "./types";
 import { calculateBalances } from "./ledger";
-import { compareAmounts, subtractAmounts, addAmounts, formatCurrency } from "./utils";
+import { compareAmounts, subtractAmounts, formatCurrency } from "./utils";
 
 /**
  * Compute net balances from expenses.

@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc",
     "start": "NODE_OPTIONS='--no-warnings' tsx ./chatbot.ts",
-    "dev": "nodemon --watch '*.ts' --watch 'scripts/**/*.ts' --ignore dist/ --exec 'npm run build && node' dist/chatbot.js",
+    "dev": "nodemon --watch '*.ts' --watch 'scripts/**/*.ts' --ignore dist/ --exec 'npm run build && tsx dist/chatbot.js'",
     "gen:keys": "npm run build && node dist/scripts/generate-keys.js",
     "lint": "eslint -c .eslintrc.json *.ts",
     "lint:fix": "eslint -c .eslintrc.json *.ts --fix",

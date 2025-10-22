@@ -1,5 +1,5 @@
 import * as dotenv from "dotenv";
-import { HumanMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { Agent as XMTPAgent, type MessageContext, type AgentMiddleware } from "@xmtp/agent-sdk";
 import {
   TransactionReferenceCodec,
@@ -10,11 +10,17 @@ import {
   WalletSendCallsCodec,
 } from "@xmtp/content-type-wallet-send-calls";
 import type { TransactionPrepared, MultiTransactionPrepared } from "./lib/action-providers";
-import { initializeAgent, type Agent, type AgentConfig } from "./lib/agent-config";
+import { 
+  initializeAgent, 
+  buildConversationContext, 
+  buildSenderContext,
+  type Agent, 
+  type AgentConfig 
+} from "./lib/agent-config";
 import { 
   ensureLocalStorage, 
-  getUserSession, 
-  saveUserSession,
+  getConversationSession,
+  saveConversationSession,
 } from "./lib/session-manager";
 import { sendSingleTransaction, sendMultipleTransactions } from "./lib/transaction-handler";
 import { validateEnvironment } from "./lib/environment";
@@ -23,6 +29,9 @@ import { USDC_ADDRESSES } from "./lib/constants";
 // Initialize environment variables
 dotenv.config();
 
+// Shared agent instance (initialized once at startup)
+let agent: Agent;
+
 
 /**
  * Process a message and detect if it contains a prepared transaction.
@@ -30,7 +39,7 @@ dotenv.config();
 async function processMessage(
   agent: Agent,
   config: AgentConfig,
-  message: string,
+  messages: BaseMessage[],
 ): Promise<{
   response: string;
   transactionPrepared?: TransactionPrepared;
@@ -41,11 +50,16 @@ async function processMessage(
   let multiTransactionPrepared: MultiTransactionPrepared | undefined;
 
   try {
-    const stream = await agent.stream({ messages: [new HumanMessage(message)] }, config);
+    const stream = await agent.stream({ messages }, config);
 
     for await (const chunk of stream) {
-      // Check for tool outputs (this is where the raw JSON comes from)
-      if ("tools" in chunk && chunk.tools?.messages) {
+      if ("agent" in chunk) {
+        console.log("AGENT:", chunk.agent.messages[0].content + "\n");
+        const content = String(chunk.agent.messages[0].content);
+        response += content + "\n";
+      // Check for tool outputs 
+      } else if ("tools" in chunk && chunk.tools?.messages) {
+        console.log("TOOL:", chunk.tools.messages[0].content + "\n");
         for (const toolMessage of chunk.tools.messages) {
           if (toolMessage.content) {
             try {
@@ -63,12 +77,7 @@ async function processMessage(
           }
         }
       }
-
-      // Get the final agent response for the user
-      if ("agent" in chunk) {
-        const content = String(chunk.agent.messages[0].content);
-        response += content + "\n";
-      }
+      console.log("-------------------");
     }
 
     return {
@@ -89,46 +98,73 @@ async function processMessage(
  */
 async function handleMessage(ctx: MessageContext) {
   try {
-    const userId = ctx.message.senderInboxId;
+    const senderInboxId = ctx.message.senderInboxId;
     const messageContent = String(ctx.message.content);
-    console.log(`\n📨 Message from ${userId.slice(0, 8)}...: ${messageContent}`);
-
-    // Get user's Ethereum address from XMTP
     const senderAddress = await ctx.getSenderAddress();
+    const conversationId = ctx.conversation.id;
+    const isGroup = ctx.isGroup();
+    
     if (!senderAddress) {
       await ctx.sendText("Error: Could not determine your wallet address. Please try again.");
       return;
     }
-
-    // Update user session
-    let userSession = getUserSession(userId);
-    if (!userSession) {
-      userSession = {
-        inboxId: userId,
-        ethereumAddress: senderAddress,
+    
+    // Determine thread ID based on conversation type
+    const threadId = isGroup ? conversationId : senderInboxId;
+    
+    console.log(`\n📨 Message from ${senderInboxId.slice(0, 8)}...: ${messageContent}`);
+    console.log(`   Context: ${isGroup ? 'Group' : 'DM'} (thread: ${threadId.slice(0, 8)}...)`);
+    
+    // Check if this is first message in thread (need to set conversation context)
+    const session = getConversationSession(threadId, isGroup);
+    const isFirstMessage = !session;
+    
+    // Update/create session
+    if (!session) {
+      saveConversationSession(threadId, isGroup, {
+        conversationId,
+        conversationType: isGroup ? "group" : "dm",
+        participants: [{ inboxId: senderInboxId, ethereumAddress: senderAddress }],
         lastSeen: new Date(),
-      };
+      });
     } else {
-      userSession.ethereumAddress = senderAddress;
-      userSession.lastSeen = new Date();
+      // Update existing session
+      const participant = session.participants.find(p => p.inboxId === senderInboxId);
+      if (!participant) {
+        session.participants.push({ inboxId: senderInboxId, ethereumAddress: senderAddress });
+      } else {
+        participant.ethereumAddress = senderAddress;
+      }
+      session.lastSeen = new Date();
+      saveConversationSession(threadId, isGroup, session);
     }
-    saveUserSession(userId, userSession);
-
-    // Initialize agent with user's address
-    const { agent, config } = await initializeAgent(userId, senderAddress);
-
-    // Process the message
-    const result = await processMessage(agent, config, messageContent);
-
+    
+    // Build messages array
+    const messages: BaseMessage[] = [];
+    
+    // Add conversation context ONCE (only for first message in thread)
+    if (isFirstMessage) {
+      messages.push(new SystemMessage(
+        buildConversationContext(conversationId, isGroup)
+      ));
+    }
+       
+    // Adppend sender context to message
+    messages.push(new HumanMessage(buildSenderContext(senderInboxId, senderAddress) + messageContent));
+    console.log("messages", messages);
+    
+    // Process with agent and specific thread
+    const config = { configurable: { thread_id: threadId } };
+    const result = await processMessage(agent, config, messages);
+    
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
       await sendMultipleTransactions(ctx, result.multiTransactionPrepared, result.response);
     } else if (result.transactionPrepared) {
       await sendSingleTransaction(ctx, result.transactionPrepared, senderAddress, result.response);
     } else {
-      // Regular text response
       await ctx.sendText(result.response);
-      console.log(`✅ Response sent`);
+      console.log(`✅ Response: ${result.response}`);
     }
   } catch (error) {
     console.error("Error handling message:", error);
@@ -168,6 +204,12 @@ async function main(): Promise<void> {
 
   validateEnvironment();
   ensureLocalStorage();
+
+  // Initialize agent ONCE at startup
+  console.log("🤖 Initializing agent...");
+  const { agent: initializedAgent } = await initializeAgent();
+  agent = initializedAgent;
+  console.log("✅ Agent ready\n");
 
   // Create XMTP agent with transaction codecs
   const xmtpAgent = await XMTPAgent.createFromEnv({
