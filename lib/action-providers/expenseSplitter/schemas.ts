@@ -57,34 +57,19 @@ export const AddExpenseSchema = z
   .describe("Instructions for adding an expense to a tab");
 
 /**
- * Schema for listing expenses in a tab.
+ * Schema for getting comprehensive tab information (expenses + balances).
  */
-export const ListExpensesSchema = z
+export const GetTabInfoSchema = z
   .object({
     groupId: z
       .string()
       .describe("The XMTP group ID"),
     tabId: z
       .string()
-      .describe("The tab ID to list expenses from"),
+      .describe("The tab ID to get information for"),
   })
   .strip()
-  .describe("Instructions for listing all expenses in a tab");
-
-/**
- * Schema for getting balances in a tab.
- */
-export const GetBalanceSchema = z
-  .object({
-    groupId: z
-      .string()
-      .describe("The XMTP group ID"),
-    tabId: z
-      .string()
-      .describe("The tab ID to calculate balances for"),
-  })
-  .strip()
-  .describe("Instructions for calculating who owes what in a tab");
+  .describe("Instructions for getting comprehensive tab information including expenses and balances");
 
 /**
  * Schema for deleting an expense.

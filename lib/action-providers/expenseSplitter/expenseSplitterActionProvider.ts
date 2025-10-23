@@ -4,13 +4,12 @@ import {
   CreateTabSchema,
   ListTabsSchema,
   AddExpenseSchema,
-  ListExpensesSchema,
-  GetBalanceSchema,
+  GetTabInfoSchema,
   DeleteExpenseSchema,
   SettleExpensesSchema,
 } from "./schemas";
 import { MultiTransactionPrepared, Expense } from "./types";
-import { generateId, getUSDCDetails, parseAmount, formatCurrency } from "./utils";
+import { generateId, getUSDCDetails, parseAmount, formatCurrency, addAmounts } from "./utils";
 import {
   createTab,
   getTab,
@@ -19,9 +18,9 @@ import {
   deleteExpense as deleteExpenseFromStorage,
 } from "./storage";
 import {
-  formatExpensesList,
-  formatBalances,
   calculateBalances,
+  calculateTotalExpenses,
+  calculateDetailedBalances,
 } from "./tab";
 import {
   computeNetBalances,
@@ -44,7 +43,10 @@ async function createExpenseTab(
     const participants = await getGroupMembers(args.groupId);
     
     if (participants.length === 0) {
-      return `Error: No members found in group ${args.groupId}`;
+      return JSON.stringify({
+        success: false,
+        message: `No members found in group ${args.groupId}`,
+      });
     }
 
     const tab = await createTab(
@@ -55,9 +57,21 @@ async function createExpenseTab(
       participants
     );
 
-    return `✅ Created tab "${tab.name}" (ID: ${tab.id})\nParticipants: ${participants.length} group members\nCurrency: ${tab.currency}`;
+    return JSON.stringify({
+      success: true,
+      data: {
+        tabId: tab.id,
+        name: tab.name,
+        participantAddresses: participants.map(p => p.address),
+        currency: tab.currency,
+      },
+      message: `Created tab "${tab.name}" with ${participants.length} participants`,
+    });
   } catch (error) {
-    return `Error creating tab: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error creating tab: ${error}`,
+    });
   }
 }
 
@@ -72,23 +86,36 @@ async function listExpenseTabs(
     const tabs = await listTabs(args.groupId);
 
     if (tabs.length === 0) {
-      return `No tabs found in this group. Create one with create_expense_tab!`;
+      return JSON.stringify({
+        success: true,
+        data: { tabs: [] },
+        message: "No tabs found in this group",
+      });
     }
 
-    let output = `📚 Tabs in group ${args.groupId.slice(0, 8)}...:\n\n`;
-    for (const tab of tabs) {
-      const expenseCount = tab.expenses.length;
-      const createdDate = new Date(tab.createdAt).toLocaleDateString();
-      output += `• ${tab.name}\n`;
-      output += `  ID: ${tab.id.slice(0, 8)}...\n`;
-      output += `  Currency: ${tab.currency}\n`;
-      output += `  Expenses: ${expenseCount}\n`;
-      output += `  Created: ${createdDate}\n\n`;
-    }
+    const tabsData = tabs.map((tab) => {
+      const totalAmount = calculateTotalExpenses(tab.expenses);
+      return {
+        id: tab.id,
+        name: tab.name,
+        currency: tab.currency,
+        expenseCount: tab.expenses.length,
+        totalAmount,
+        participantAddresses: tab.participants.map(p => p.address),
+        createdAt: tab.createdAt,
+      };
+    });
 
-    return output.trim();
+    return JSON.stringify({
+      success: true,
+      data: { tabs: tabsData },
+      message: `Found ${tabs.length} tab(s) in this group`,
+    });
   } catch (error) {
-    return `Error listing tabs: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error listing tabs: ${error}`,
+    });
   }
 }
 
@@ -102,7 +129,10 @@ async function addExpense(
   try {
     const tab = await getTab(args.groupId, args.tabId);
     if (!tab) {
-      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
+      return JSON.stringify({
+        success: false,
+        message: `Tab ${args.tabId} not found in group ${args.groupId}`,
+      });
     }
 
     // Validate amount
@@ -113,7 +143,10 @@ async function addExpense(
     const payer = tab.participants.find(p => p.address === normalizedPayerAddress);
     
     if (!payer) {
-      return `Error: Address ${args.payerAddress} is not a participant in this tab`;
+      return JSON.stringify({
+        success: false,
+        message: `Address ${args.payerAddress} is not a participant in this tab`,
+      });
     }
 
     // Determine participants for this expense
@@ -129,7 +162,10 @@ async function addExpense(
       );
       
       if (invalidAddresses.length > 0) {
-        return `Error: The following addresses are not participants in this tab: ${invalidAddresses.join(", ")}`;
+        return JSON.stringify({
+          success: false,
+          message: `The following addresses are not participants in this tab: ${invalidAddresses.join(", ")}`,
+        });
       }
       
       // Convert addresses to inboxIds
@@ -142,7 +178,10 @@ async function addExpense(
     }
 
     if (participantInboxIds.length === 0) {
-      return `Error: No valid participants for this expense`;
+      return JSON.stringify({
+        success: false,
+        message: "No valid participants for this expense",
+      });
     }
 
     const expense: Expense = {
@@ -159,66 +198,90 @@ async function addExpense(
 
     await addExpenseToStorage(args.groupId, args.tabId, expense);
 
-    const participantInfo = args.participantAddresses
-      ? `${participantInboxIds.length} people (${args.participantAddresses.map(a => a.slice(0, 6)).join(", ")}...)`
-      : `all ${participantInboxIds.length} participants`;
+    // Get participant addresses for this expense
+    const expenseParticipantAddresses = tab.participants
+      .filter(p => participantInboxIds.includes(p.inboxId))
+      .map(p => p.address);
 
-    return `✅ Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}"\nPaid by: ${payer.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
+    return JSON.stringify({
+      success: true,
+      data: {
+        expenseId: expense.id,
+        amount,
+        description: args.description,
+        payerAddress: payer.address,
+        participantAddresses: expenseParticipantAddresses,
+      },
+      message: `Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}"`,
+    });
   } catch (error) {
-    return `Error adding expense: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error adding expense: ${error}`,
+    });
   }
 }
 
 /**
- * List all expenses in a tab.
+ * Get comprehensive tab information including expenses and balances.
  */
-async function listExpenses(
+async function getTabInfo(
   walletProvider: EvmWalletProvider,
-  args: z.infer<typeof ListExpensesSchema>
+  args: z.infer<typeof GetTabInfoSchema>
 ): Promise<string> {
   try {
     const tab = await getTab(args.groupId, args.tabId);
     if (!tab) {
-      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
+      return JSON.stringify({
+        success: false,
+        message: `Tab ${args.tabId} not found in group ${args.groupId}`,
+      });
     }
 
-    const formatted = formatExpensesList(tab.expenses, tab.currency);
-    return `📖 Tab: ${tab.name}\n\n${formatted}`;
+    // Calculate total expenses
+    const totalExpenses = calculateTotalExpenses(tab.expenses);
+
+    // Format expenses
+    const expenses = tab.expenses.map((expense) => {
+      // Get participant addresses for this expense
+      const participantAddresses = tab.participants
+        .filter(p => expense.participantInboxIds.includes(p.inboxId))
+        .map(p => p.address);
+      
+      return {
+        id: expense.id,
+        amount: expense.amount,
+        description: expense.description,
+        payerAddress: expense.payerAddress,
+        participantAddresses,
+        timestamp: expense.timestamp,
+      };
+    });
+
+    // Calculate detailed balances
+    const balances = calculateDetailedBalances(tab.expenses, tab.participants);
+
+    return JSON.stringify({
+      success: true,
+      data: {
+        tab: {
+          id: tab.id,
+          name: tab.name,
+          currency: tab.currency,
+          participantAddresses: tab.participants.map(p => p.address),
+          createdAt: tab.createdAt,
+        },
+        expenses,
+        totalExpenses,
+        balances,
+      },
+      message: `Tab "${tab.name}" has ${expenses.length} expense(s)`,
+    });
   } catch (error) {
-    return `Error listing expenses: ${error}`;
-  }
-}
-
-/**
- * Get balances for all participants in a tab.
- */
-async function getBalances(
-  walletProvider: EvmWalletProvider,
-  args: z.infer<typeof GetBalanceSchema>
-): Promise<string> {
-  try {
-    const tab = await getTab(args.groupId, args.tabId);
-    if (!tab) {
-      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
-    }
-
-    if (tab.expenses.length === 0) {
-      return `No expenses in tab "${tab.name}". Nothing to settle!`;
-    }
-
-    const balances = calculateBalances(tab.expenses);
-    const formatted = formatBalances(balances, tab.currency);
-
-    // Debug info
-    let debugInfo = `\n\n🐛 DEBUG:\n  Tab participants: ${tab.participants.length}\n  Expenses: ${tab.expenses.length}`;
-    for (let i = 0; i < tab.expenses.length; i++) {
-      const exp = tab.expenses[i];
-      debugInfo += `\n  Expense ${i + 1}: ${exp.amount} split among ${exp.participantInboxIds.length} people`;
-    }
-
-    return `📊 Balances for tab "${tab.name}":\n\n${formatted}${debugInfo}`;
-  } catch (error) {
-    return `Error calculating balances: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error getting tab info: ${error}`,
+    });
   }
 }
 
@@ -232,9 +295,16 @@ async function deleteExpense(
   try {
     await deleteExpenseFromStorage(args.groupId, args.tabId, args.expenseId);
 
-    return `✅ Deleted expense ${args.expenseId.slice(0, 8)}... from tab`;
+    return JSON.stringify({
+      success: true,
+      data: { expenseId: args.expenseId },
+      message: `Deleted expense ${args.expenseId}`,
+    });
   } catch (error) {
-    return `Error deleting expense: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error deleting expense: ${error}`,
+    });
   }
 }
 
@@ -324,7 +394,10 @@ async function settleExpenses(
     // Return JSON that will be detected by the chatbot
     return JSON.stringify(response);
   } catch (error) {
-    return `Error settling expenses: ${error}`;
+    return JSON.stringify({
+      success: false,
+      message: `Error settling expenses: ${error}`,
+    });
   }
 }
 
@@ -343,7 +416,7 @@ export const expenseSplitterActionProvider = () => {
       - groupId: The XMTP group ID where this tab will be created
       - tabName: A human-readable name for the tab (e.g., "Weekend Trip", "Monthly Dinners")
       
-      The tab automatically includes all current group members as participants.
+      The tab includes all current group members as participants by default.
       Currency is always USDC.
       
       Use this when users want to start tracking expenses for a specific event or period.
@@ -388,32 +461,27 @@ export const expenseSplitterActionProvider = () => {
       invoke: addExpense,
     },
     {
-      name: "list_expenses",
+      name: "get_tab_info",
       description: `
-      This tool lists all expenses in a tab with a summary.
+      This tool gets comprehensive information about a tab including all expenses and current balances.
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - tabId: The tab ID to list expenses from
+      - tabId: The tab ID to get information for
       
-      Use this when users want to see all expenses that have been recorded.
+      Returns:
+      - Tab details (name, currency, creation date)
+      - List of all expenses with amounts, descriptions, payers, and participants
+      - Total expenses amount
+      - Detailed balances for each participant showing:
+        * Total amount they paid out
+        * Net settlement amount (positive = they should receive, negative = they should pay)
+        * Status (owes/owed/settled)
+      
+      Use this when users want to see expenses, check balances, or get a complete overview of a tab.
       `,
-      schema: ListExpensesSchema,
-      invoke: listExpenses,
-    },
-    {
-      name: "get_balances",
-      description: `
-      This tool calculates and shows who owes what in a tab.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - tabId: The tab ID to calculate balances for
-      
-      Use this when users want to know the current balance status (who owes whom).
-      `,
-      schema: GetBalanceSchema,
-      invoke: getBalances,
+      schema: GetTabInfoSchema,
+      invoke: getTabInfo,
     },
     {
       name: "delete_expense",

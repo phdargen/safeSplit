@@ -163,3 +163,67 @@ export function validateExpenseParticipants(
   }
 }
 
+/**
+ * Calculate total expenses amount.
+ */
+export function calculateTotalExpenses(expenses: Expense[]): string {
+  let total = "0";
+  for (const expense of expenses) {
+    total = addAmounts(total, expense.amount);
+  }
+  return total;
+}
+
+/**
+ * Calculate detailed balances including total paid and net settlement.
+ */
+export function calculateDetailedBalances(
+  expenses: Expense[],
+  participants: Array<{ inboxId: string; address: string }>
+): Array<{
+  inboxId: string;
+  address: string;
+  totalPaid: string;
+  netSettlement: string;
+  status: "owes" | "owed" | "settled";
+}> {
+  // Calculate net balances
+  const netBalances = calculateBalances(expenses);
+  
+  // Calculate total paid by each participant
+  const totalPaidMap = new Map<string, string>();
+  for (const expense of expenses) {
+    const current = totalPaidMap.get(expense.payerInboxId) || "0";
+    totalPaidMap.set(expense.payerInboxId, addAmounts(current, expense.amount));
+  }
+  
+  // Build detailed balance array
+  const detailedBalances = [];
+  
+  // Include all participants, even those with no activity
+  for (const participant of participants) {
+    const netAmount = netBalances.get(participant.inboxId) || "0";
+    const totalPaid = totalPaidMap.get(participant.inboxId) || "0";
+    const netValue = parseFloat(netAmount);
+    
+    let status: "owes" | "owed" | "settled";
+    if (netValue > 0.01) {
+      status = "owed";
+    } else if (netValue < -0.01) {
+      status = "owes";
+    } else {
+      status = "settled";
+    }
+    
+    detailedBalances.push({
+      inboxId: participant.inboxId,
+      address: participant.address,
+      totalPaid,
+      netSettlement: netAmount,
+      status,
+    });
+  }
+  
+  return detailedBalances;
+}
+
