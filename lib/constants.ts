@@ -11,5 +11,6 @@ export const USDC_ADDRESSES: Record<string, `0x${string}`> = {
 };
 
 // Storage directory for user sessions
-export const STORAGE_DIR = ".data/user-sessions";
+// Uses Railway persistent volume mount path when available, falls back to local .data directory
+export const STORAGE_DIR = `${process.env.RAILWAY_VOLUME_MOUNT_PATH ?? '.'}/.data/user-sessions`;
 
