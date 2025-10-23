@@ -199,6 +199,9 @@ export async function sendMultipleTransactions(
             tokenAddress: settlement.metadata[index].tokenAddress,
           },
         })),
+        capabilities: {
+          paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL } as unknown as string,
+        } as const,
       };
 
       // Build details about payments

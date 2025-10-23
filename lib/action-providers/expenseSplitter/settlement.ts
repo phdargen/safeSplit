@@ -3,7 +3,7 @@
  */
 import { encodeFunctionData, erc20Abi, parseUnits, Hex } from "viem";
 import { Settlement, Balance, Expense } from "./types";
-import { calculateBalances } from "./ledger";
+import { calculateBalances } from "./tab";
 import { compareAmounts, subtractAmounts, formatCurrency } from "./utils";
 
 /**

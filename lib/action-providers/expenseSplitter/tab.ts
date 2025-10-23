@@ -1,5 +1,5 @@
 /**
- * Ledger operations for expense tracking and balance calculations.
+ * Tab operations for expense tracking and balance calculations.
  */
 import { Expense } from "./types";
 import { formatCurrency, addAmounts, subtractAmounts, multiplyAmount, divideAmount } from "./utils";

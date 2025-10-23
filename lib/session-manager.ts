@@ -20,7 +20,7 @@ export interface ConversationSession {
     inboxId: string;
     ethereumAddress?: string;
   }>;
-  lastActiveLedgerId?: string; // For groups
+  lastActiveTabId?: string; // For groups
   groupName?: string; // For groups
   groupDescription?: string; // For groups
   groupImageUrl?: string; // For groups

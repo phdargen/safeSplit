@@ -4,7 +4,7 @@
  */
 import { Redis } from "@upstash/redis";
 import * as dotenv from "dotenv";
-import { ExpenseLedger, Expense } from "./types";
+import { ExpenseTab, Expense } from "./types";
 
 dotenv.config();
 
@@ -27,36 +27,36 @@ export const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_R
   : null;
 
 /**
- * Generate Redis key for a ledger.
+ * Generate Redis key for a tab.
  */
-function getLedgerKey(groupId: string, ledgerId: string): string {
-  return `expenseSplitter:group:${groupId}:ledger:${ledgerId}`;
+function getTabKey(groupId: string, tabId: string): string {
+  return `expenseSplitter:group:${groupId}:tab:${tabId}`;
 }
 
 /**
- * Generate Redis key for the list of ledger IDs in a group.
+ * Generate Redis key for the list of tab IDs in a group.
  */
-function getLedgersListKey(groupId: string): string {
-  return `expenseSplitter:group:${groupId}:ledgers`;
+function getTabsListKey(groupId: string): string {
+  return `expenseSplitter:group:${groupId}:tabs`;
 }
 
 /**
- * Create a new expense ledger.
+ * Create a new expense tab.
  */
-export async function createLedger(
+export async function createTab(
   groupId: string,
-  ledgerId: string,
-  ledgerName: string,
+  tabId: string,
+  tabName: string,
   currency: string = "USDC",
   participants: Array<{ inboxId: string; address: string }> = []
-): Promise<ExpenseLedger> {
+): Promise<ExpenseTab> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledger: ExpenseLedger = {
-    id: ledgerId,
-    name: ledgerName,
+  const tab: ExpenseTab = {
+    id: tabId,
+    name: tabName,
     groupId,
     participants,
     expenses: [],
@@ -64,31 +64,31 @@ export async function createLedger(
     currency,
   };
 
-  const ledgerKey = getLedgerKey(groupId, ledgerId);
-  const ledgersListKey = getLedgersListKey(groupId);
+  const tabKey = getTabKey(groupId, tabId);
+  const tabsListKey = getTabsListKey(groupId);
 
-  // Store the ledger (Upstash Redis handles JSON serialization automatically)
-  await redis.set(ledgerKey, ledger);
+  // Store the tab (Upstash Redis handles JSON serialization automatically)
+  await redis.set(tabKey, tab);
 
-  // Add ledger ID to the group's ledger list
-  await redis.sadd(ledgersListKey, ledgerId);
+  // Add tab ID to the group's tab list
+  await redis.sadd(tabsListKey, tabId);
 
-  return ledger;
+  return tab;
 }
 
 /**
- * Get a specific ledger by ID.
+ * Get a specific tab by ID.
  */
-export async function getLedger(
+export async function getTab(
   groupId: string,
-  ledgerId: string
-): Promise<ExpenseLedger | null> {
+  tabId: string
+): Promise<ExpenseTab | null> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledgerKey = getLedgerKey(groupId, ledgerId);
-  const data = await redis.get<ExpenseLedger>(ledgerKey);
+  const tabKey = getTabKey(groupId, tabId);
+  const data = await redis.get<ExpenseTab>(tabKey);
 
   if (!data) {
     return null;
@@ -98,117 +98,117 @@ export async function getLedger(
 }
 
 /**
- * List all ledgers for a group.
+ * List all tabs for a group.
  */
-export async function listLedgers(groupId: string): Promise<ExpenseLedger[]> {
+export async function listTabs(groupId: string): Promise<ExpenseTab[]> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledgersListKey = getLedgersListKey(groupId);
-  const ledgerIds = await redis.smembers(ledgersListKey) as string[];
+  const tabsListKey = getTabsListKey(groupId);
+  const tabIds = await redis.smembers(tabsListKey) as string[];
 
-  if (!ledgerIds || ledgerIds.length === 0) {
+  if (!tabIds || tabIds.length === 0) {
     return [];
   }
 
-  const ledgers: ExpenseLedger[] = [];
-  for (const ledgerId of ledgerIds) {
-    const ledger = await getLedger(groupId, ledgerId);
-    if (ledger) {
-      ledgers.push(ledger);
+  const tabs: ExpenseTab[] = [];
+  for (const tabId of tabIds) {
+    const tab = await getTab(groupId, tabId);
+    if (tab) {
+      tabs.push(tab);
     }
   }
 
-  return ledgers;
+  return tabs;
 }
 
 /**
- * Add an expense to a ledger.
+ * Add an expense to a tab.
  */
 export async function addExpense(
   groupId: string,
-  ledgerId: string,
+  tabId: string,
   expense: Expense
-): Promise<ExpenseLedger> {
+): Promise<ExpenseTab> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledger = await getLedger(groupId, ledgerId);
-  if (!ledger) {
-    throw new Error(`Ledger not found: ${ledgerId}`);
+  const tab = await getTab(groupId, tabId);
+  if (!tab) {
+    throw new Error(`Tab not found: ${tabId}`);
   }
 
-  ledger.expenses.push(expense);
+  tab.expenses.push(expense);
 
-  const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, ledger);
+  const tabKey = getTabKey(groupId, tabId);
+  await redis.set(tabKey, tab);
 
-  return ledger;
+  return tab;
 }
 
 /**
- * Delete an expense from a ledger.
+ * Delete an expense from a tab.
  */
 export async function deleteExpense(
   groupId: string,
-  ledgerId: string,
+  tabId: string,
   expenseId: string
-): Promise<ExpenseLedger> {
+): Promise<ExpenseTab> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledger = await getLedger(groupId, ledgerId);
-  if (!ledger) {
-    throw new Error(`Ledger not found: ${ledgerId}`);
+  const tab = await getTab(groupId, tabId);
+  if (!tab) {
+    throw new Error(`Tab not found: ${tabId}`);
   }
 
-  const initialLength = ledger.expenses.length;
-  ledger.expenses = ledger.expenses.filter(e => e.id !== expenseId);
+  const initialLength = tab.expenses.length;
+  tab.expenses = tab.expenses.filter(e => e.id !== expenseId);
 
-  if (ledger.expenses.length === initialLength) {
+  if (tab.expenses.length === initialLength) {
     throw new Error(`Expense not found: ${expenseId}`);
   }
 
-  const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, ledger);
+  const tabKey = getTabKey(groupId, tabId);
+  await redis.set(tabKey, tab);
 
-  return ledger;
+  return tab;
 }
 
 /**
- * Update an expense in a ledger.
+ * Update an expense in a tab.
  */
 export async function updateExpense(
   groupId: string,
-  ledgerId: string,
+  tabId: string,
   expenseId: string,
   updates: Partial<Expense>
-): Promise<ExpenseLedger> {
+): Promise<ExpenseTab> {
   if (!redis) {
     throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
   }
 
-  const ledger = await getLedger(groupId, ledgerId);
-  if (!ledger) {
-    throw new Error(`Ledger not found: ${ledgerId}`);
+  const tab = await getTab(groupId, tabId);
+  if (!tab) {
+    throw new Error(`Tab not found: ${tabId}`);
   }
 
-  const expenseIndex = ledger.expenses.findIndex(e => e.id === expenseId);
+  const expenseIndex = tab.expenses.findIndex(e => e.id === expenseId);
   if (expenseIndex === -1) {
     throw new Error(`Expense not found: ${expenseId}`);
   }
 
-  ledger.expenses[expenseIndex] = {
-    ...ledger.expenses[expenseIndex],
+  tab.expenses[expenseIndex] = {
+    ...tab.expenses[expenseIndex],
     ...updates,
   };
 
-  const ledgerKey = getLedgerKey(groupId, ledgerId);
-  await redis.set(ledgerKey, ledger);
+  const tabKey = getTabKey(groupId, tabId);
+  await redis.set(tabKey, tab);
 
-  return ledger;
+  return tab;
 }
 

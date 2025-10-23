@@ -3,7 +3,7 @@
  */
 
 /**
- * Represents a single expense in a ledger.
+ * Represents a single expense in a tab.
  */
 export interface Expense {
   /**
@@ -12,9 +12,9 @@ export interface Expense {
   id: string;
 
   /**
-   * ID of the ledger this expense belongs to.
+   * ID of the tab this expense belongs to.
    */
-  ledgerId: string;
+  tabId: string;
 
   /**
    * Inbox ID of the person who paid.
@@ -59,26 +59,26 @@ export interface Expense {
 }
 
 /**
- * Represents an expense ledger for a group.
+ * Represents an expense tab for a group.
  */
-export interface ExpenseLedger {
+export interface ExpenseTab {
   /**
-   * Unique identifier for the ledger.
+   * Unique identifier for the tab.
    */
   id: string;
 
   /**
-   * Human-readable name for the ledger.
+   * Human-readable name for the tab.
    */
   name: string;
 
   /**
-   * XMTP group ID this ledger belongs to.
+   * XMTP group ID this tab belongs to.
    */
   groupId: string;
 
   /**
-   * Participants in this ledger (snapshot of group members at creation).
+   * Participants in this tab (snapshot of group members at creation).
    */
   participants: Array<{
     inboxId: string;
@@ -86,17 +86,17 @@ export interface ExpenseLedger {
   }>;
 
   /**
-   * Array of expenses in this ledger.
+   * Array of expenses in this tab.
    */
   expenses: Expense[];
 
   /**
-   * Timestamp when the ledger was created.
+   * Timestamp when the tab was created.
    */
   createdAt: number;
 
   /**
-   * Default currency for this ledger.
+   * Default currency for this tab.
    */
   currency: string;
 }

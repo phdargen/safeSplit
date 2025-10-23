@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { customActionProvider, EvmWalletProvider } from "@coinbase/agentkit";
 import {
-  CreateLedgerSchema,
-  ListLedgersSchema,
+  CreateTabSchema,
+  ListTabsSchema,
   AddExpenseSchema,
   ListExpensesSchema,
   GetBalanceSchema,
@@ -12,9 +12,9 @@ import {
 import { MultiTransactionPrepared, Expense } from "./types";
 import { generateId, getUSDCDetails, parseAmount, formatCurrency } from "./utils";
 import {
-  createLedger,
-  getLedger,
-  listLedgers,
+  createTab,
+  getTab,
+  listTabs,
   addExpense as addExpenseToStorage,
   deleteExpense as deleteExpenseFromStorage,
 } from "./storage";
@@ -22,7 +22,7 @@ import {
   formatExpensesList,
   formatBalances,
   calculateBalances,
-} from "./ledger";
+} from "./tab";
 import {
   computeNetBalances,
   optimizeSettlements,
@@ -31,14 +31,14 @@ import {
 import { getGroupMembers } from "../xmtp/utils";
 
 /**
- * Create a new expense ledger in a group.
+ * Create a new expense tab in a group.
  */
-async function createExpenseLedger(
+async function createExpenseTab(
   walletProvider: EvmWalletProvider,
-  args: z.infer<typeof CreateLedgerSchema>
+  args: z.infer<typeof CreateTabSchema>
 ): Promise<string> {
   try {
-    const ledgerId = generateId();
+    const tabId = generateId();
     
     // Fetch all group members automatically
     const participants = await getGroupMembers(args.groupId);
@@ -47,62 +47,62 @@ async function createExpenseLedger(
       return `Error: No members found in group ${args.groupId}`;
     }
 
-    const ledger = await createLedger(
+    const tab = await createTab(
       args.groupId,
-      ledgerId,
-      args.ledgerName,
+      tabId,
+      args.tabName,
       "USDC",
       participants
     );
 
-    return `✅ Created ledger "${ledger.name}" (ID: ${ledger.id})\nParticipants: ${participants.length} group members\nCurrency: ${ledger.currency}`;
+    return `✅ Created tab "${tab.name}" (ID: ${tab.id})\nParticipants: ${participants.length} group members\nCurrency: ${tab.currency}`;
   } catch (error) {
-    return `Error creating ledger: ${error}`;
+    return `Error creating tab: ${error}`;
   }
 }
 
 /**
- * List all ledgers in a group.
+ * List all tabs in a group.
  */
-async function listExpenseLedgers(
+async function listExpenseTabs(
   walletProvider: EvmWalletProvider,
-  args: z.infer<typeof ListLedgersSchema>
+  args: z.infer<typeof ListTabsSchema>
 ): Promise<string> {
   try {
-    const ledgers = await listLedgers(args.groupId);
+    const tabs = await listTabs(args.groupId);
 
-    if (ledgers.length === 0) {
-      return `No ledgers found in this group. Create one with create_expense_ledger!`;
+    if (tabs.length === 0) {
+      return `No tabs found in this group. Create one with create_expense_tab!`;
     }
 
-    let output = `📚 Ledgers in group ${args.groupId.slice(0, 8)}...:\n\n`;
-    for (const ledger of ledgers) {
-      const expenseCount = ledger.expenses.length;
-      const createdDate = new Date(ledger.createdAt).toLocaleDateString();
-      output += `• ${ledger.name}\n`;
-      output += `  ID: ${ledger.id.slice(0, 8)}...\n`;
-      output += `  Currency: ${ledger.currency}\n`;
+    let output = `📚 Tabs in group ${args.groupId.slice(0, 8)}...:\n\n`;
+    for (const tab of tabs) {
+      const expenseCount = tab.expenses.length;
+      const createdDate = new Date(tab.createdAt).toLocaleDateString();
+      output += `• ${tab.name}\n`;
+      output += `  ID: ${tab.id.slice(0, 8)}...\n`;
+      output += `  Currency: ${tab.currency}\n`;
       output += `  Expenses: ${expenseCount}\n`;
       output += `  Created: ${createdDate}\n\n`;
     }
 
     return output.trim();
   } catch (error) {
-    return `Error listing ledgers: ${error}`;
+    return `Error listing tabs: ${error}`;
   }
 }
 
 /**
- * Add an expense to a ledger.
+ * Add an expense to a tab.
  */
 async function addExpense(
   walletProvider: EvmWalletProvider,
   args: z.infer<typeof AddExpenseSchema>
 ): Promise<string> {
   try {
-    const ledger = await getLedger(args.groupId, args.ledgerId);
-    if (!ledger) {
-      return `Error: Ledger ${args.ledgerId} not found in group ${args.groupId}`;
+    const tab = await getTab(args.groupId, args.tabId);
+    if (!tab) {
+      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
     }
 
     // Validate amount
@@ -110,10 +110,10 @@ async function addExpense(
 
     // Get payer information by address
     const normalizedPayerAddress = args.payerAddress.toLowerCase();
-    const payer = ledger.participants.find(p => p.address === normalizedPayerAddress);
+    const payer = tab.participants.find(p => p.address === normalizedPayerAddress);
     
     if (!payer) {
-      return `Error: Address ${args.payerAddress} is not a participant in this ledger`;
+      return `Error: Address ${args.payerAddress} is not a participant in this tab`;
     }
 
     // Determine participants for this expense
@@ -123,22 +123,22 @@ async function addExpense(
       // Subset of participants specified by addresses
       const normalizedAddresses = args.participantAddresses.map(addr => addr.toLowerCase());
       
-      // Validate all addresses exist in ledger participants
+      // Validate all addresses exist in tab participants
       const invalidAddresses = normalizedAddresses.filter(
-        addr => !ledger.participants.some(p => p.address === addr)
+        addr => !tab.participants.some(p => p.address === addr)
       );
       
       if (invalidAddresses.length > 0) {
-        return `Error: The following addresses are not participants in this ledger: ${invalidAddresses.join(", ")}`;
+        return `Error: The following addresses are not participants in this tab: ${invalidAddresses.join(", ")}`;
       }
       
       // Convert addresses to inboxIds
-      participantInboxIds = ledger.participants
+      participantInboxIds = tab.participants
         .filter(p => normalizedAddresses.includes(p.address))
         .map(p => p.inboxId);
     } else {
-      // Default to all ledger participants
-      participantInboxIds = ledger.participants.map(p => p.inboxId);
+      // Default to all tab participants
+      participantInboxIds = tab.participants.map(p => p.inboxId);
     }
 
     if (participantInboxIds.length === 0) {
@@ -147,92 +147,92 @@ async function addExpense(
 
     const expense: Expense = {
       id: generateId(),
-      ledgerId: args.ledgerId,
+      tabId: args.tabId,
       payerInboxId: payer.inboxId,
       payerAddress: payer.address,
       amount,
       description: args.description,
       participantInboxIds,
       timestamp: Date.now(),
-      currency: ledger.currency,
+      currency: tab.currency,
     };
 
-    await addExpenseToStorage(args.groupId, args.ledgerId, expense);
+    await addExpenseToStorage(args.groupId, args.tabId, expense);
 
     const participantInfo = args.participantAddresses
       ? `${participantInboxIds.length} people (${args.participantAddresses.map(a => a.slice(0, 6)).join(", ")}...)`
       : `all ${participantInboxIds.length} participants`;
 
-    return `✅ Added expense: ${formatCurrency(amount, ledger.currency)} for "${args.description}"\nPaid by: ${payer.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
+    return `✅ Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}"\nPaid by: ${payer.address.slice(0, 8)}...\nSplit among: ${participantInfo}\nExpense ID: ${expense.id.slice(0, 8)}...`;
   } catch (error) {
     return `Error adding expense: ${error}`;
   }
 }
 
 /**
- * List all expenses in a ledger.
+ * List all expenses in a tab.
  */
 async function listExpenses(
   walletProvider: EvmWalletProvider,
   args: z.infer<typeof ListExpensesSchema>
 ): Promise<string> {
   try {
-    const ledger = await getLedger(args.groupId, args.ledgerId);
-    if (!ledger) {
-      return `Error: Ledger ${args.ledgerId} not found in group ${args.groupId}`;
+    const tab = await getTab(args.groupId, args.tabId);
+    if (!tab) {
+      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
     }
 
-    const formatted = formatExpensesList(ledger.expenses, ledger.currency);
-    return `📖 Ledger: ${ledger.name}\n\n${formatted}`;
+    const formatted = formatExpensesList(tab.expenses, tab.currency);
+    return `📖 Tab: ${tab.name}\n\n${formatted}`;
   } catch (error) {
     return `Error listing expenses: ${error}`;
   }
 }
 
 /**
- * Get balances for all participants in a ledger.
+ * Get balances for all participants in a tab.
  */
 async function getBalances(
   walletProvider: EvmWalletProvider,
   args: z.infer<typeof GetBalanceSchema>
 ): Promise<string> {
   try {
-    const ledger = await getLedger(args.groupId, args.ledgerId);
-    if (!ledger) {
-      return `Error: Ledger ${args.ledgerId} not found in group ${args.groupId}`;
+    const tab = await getTab(args.groupId, args.tabId);
+    if (!tab) {
+      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
     }
 
-    if (ledger.expenses.length === 0) {
-      return `No expenses in ledger "${ledger.name}". Nothing to settle!`;
+    if (tab.expenses.length === 0) {
+      return `No expenses in tab "${tab.name}". Nothing to settle!`;
     }
 
-    const balances = calculateBalances(ledger.expenses);
-    const formatted = formatBalances(balances, ledger.currency);
+    const balances = calculateBalances(tab.expenses);
+    const formatted = formatBalances(balances, tab.currency);
 
     // Debug info
-    let debugInfo = `\n\n🐛 DEBUG:\n  Ledger participants: ${ledger.participants.length}\n  Expenses: ${ledger.expenses.length}`;
-    for (let i = 0; i < ledger.expenses.length; i++) {
-      const exp = ledger.expenses[i];
+    let debugInfo = `\n\n🐛 DEBUG:\n  Tab participants: ${tab.participants.length}\n  Expenses: ${tab.expenses.length}`;
+    for (let i = 0; i < tab.expenses.length; i++) {
+      const exp = tab.expenses[i];
       debugInfo += `\n  Expense ${i + 1}: ${exp.amount} split among ${exp.participantInboxIds.length} people`;
     }
 
-    return `📊 Balances for ledger "${ledger.name}":\n\n${formatted}${debugInfo}`;
+    return `📊 Balances for tab "${tab.name}":\n\n${formatted}${debugInfo}`;
   } catch (error) {
     return `Error calculating balances: ${error}`;
   }
 }
 
 /**
- * Delete an expense from a ledger.
+ * Delete an expense from a tab.
  */
 async function deleteExpense(
   walletProvider: EvmWalletProvider,
   args: z.infer<typeof DeleteExpenseSchema>
 ): Promise<string> {
   try {
-    await deleteExpenseFromStorage(args.groupId, args.ledgerId, args.expenseId);
+    await deleteExpenseFromStorage(args.groupId, args.tabId, args.expenseId);
 
-    return `✅ Deleted expense ${args.expenseId.slice(0, 8)}... from ledger`;
+    return `✅ Deleted expense ${args.expenseId.slice(0, 8)}... from tab`;
   } catch (error) {
     return `Error deleting expense: ${error}`;
   }
@@ -246,13 +246,13 @@ async function settleExpenses(
   args: z.infer<typeof SettleExpensesSchema>
 ): Promise<string> {
   try {
-    const ledger = await getLedger(args.groupId, args.ledgerId);
-    if (!ledger) {
-      return `Error: Ledger ${args.ledgerId} not found in group ${args.groupId}`;
+    const tab = await getTab(args.groupId, args.tabId);
+    if (!tab) {
+      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
     }
 
-    if (ledger.expenses.length === 0) {
-      return `No expenses in ledger "${ledger.name}". Nothing to settle!`;
+    if (tab.expenses.length === 0) {
+      return `No expenses in tab "${tab.name}". Nothing to settle!`;
     }
 
     // Get token address (default to USDC for the network)
@@ -262,7 +262,7 @@ async function settleExpenses(
       : getUSDCDetails(networkId);
 
     // Compute balances (pass participants to ensure all addresses are resolved)
-    const balances = computeNetBalances(ledger.expenses, ledger.participants);
+    const balances = computeNetBalances(tab.expenses, tab.participants);
 
     // Check if everyone is settled
     const hasImbalance = balances.some(b => Math.abs(parseFloat(b.netAmount)) > 0.01);
@@ -271,7 +271,7 @@ async function settleExpenses(
     }
 
     // Optimize settlements
-    const settlements = optimizeSettlements(balances, ledger.currency);
+    const settlements = optimizeSettlements(balances, tab.currency);
 
     if (settlements.length === 0) {
       return `✅ All settled! Everyone has paid their fair share.`;
@@ -317,7 +317,7 @@ async function settleExpenses(
 
     const response: MultiTransactionPrepared = {
       type: "MULTI_TRANSACTION_PREPARED",
-      description: `Settlement for ledger "${ledger.name}" - ${batchedSettlements.length} payer(s), ${settlements.length} transfer(s)`,
+      description: `Settlement for tab "${tab.name}" - ${batchedSettlements.length} payer(s), ${settlements.length} transfer(s)`,
       settlements: batchedSettlements,
     };
 
@@ -335,51 +335,51 @@ async function settleExpenses(
 export const expenseSplitterActionProvider = () => {
   const provider = customActionProvider<EvmWalletProvider>([
     {
-      name: "create_expense_ledger",
+      name: "create_expense_tab",
       description: `
-      This tool creates a new expense ledger in an XMTP group.
+      This tool creates a new expense tab in an XMTP group.
       
       It takes the following inputs:
-      - groupId: The XMTP group ID where this ledger will be created
-      - ledgerName: A human-readable name for the ledger (e.g., "Weekend Trip", "Monthly Dinners")
+      - groupId: The XMTP group ID where this tab will be created
+      - tabName: A human-readable name for the tab (e.g., "Weekend Trip", "Monthly Dinners")
       
-      The ledger automatically includes all current group members as participants.
+      The tab automatically includes all current group members as participants.
       Currency is always USDC.
       
       Use this when users want to start tracking expenses for a specific event or period.
       `,
-      schema: CreateLedgerSchema,
-      invoke: createExpenseLedger,
+      schema: CreateTabSchema,
+      invoke: createExpenseTab,
     },
     {
-      name: "list_expense_ledgers",
+      name: "list_expense_tabs",
       description: `
-      This tool lists all expense ledgers in an XMTP group.
+      This tool lists all expense tabs in an XMTP group.
       
       It takes the following inputs:
-      - groupId: The XMTP group ID to list ledgers for
+      - groupId: The XMTP group ID to list tabs for
       
-      Use this when users want to see all available ledgers in their group.
+      Use this when users want to see all available tabs in their group.
       `,
-      schema: ListLedgersSchema,
-      invoke: listExpenseLedgers,
+      schema: ListTabsSchema,
+      invoke: listExpenseTabs,
     },
     {
       name: "add_expense",
       description: `
-      This tool adds an expense to an expense ledger.
+      This tool adds an expense to an expense tab.
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - ledgerId: The ledger ID to add the expense to
+      - tabId: The tab ID to add the expense to
       - amount: The amount of the expense as a string (e.g., "10.5", "100")
       - description: What the expense was for (e.g., "beer", "dinner", "hotel")
-      - payerAddress: Ethereum address of the person who paid for this expense (can be any ledger participant)
+      - payerAddress: Ethereum address of the person who paid for this expense (can be any tab participant)
       - participantAddresses: Optional array of Ethereum addresses for people sharing this expense
       
-      The payer can be anyone in the ledger, not just the message sender.
+      The payer can be anyone in the tab, not just the message sender.
       This allows scenarios like "Alice says: Bob paid for dinner" where Alice is the sender but Bob is the payer.
-      If participantAddresses is not provided, the expense is split equally among all ledger participants.
+      If participantAddresses is not provided, the expense is split equally among all tab participants.
       If participantAddresses is provided, the expense is split only among those specific people.
       
       Use this when users report an expense (whether they paid or someone else paid).
@@ -390,11 +390,11 @@ export const expenseSplitterActionProvider = () => {
     {
       name: "list_expenses",
       description: `
-      This tool lists all expenses in a ledger with a summary.
+      This tool lists all expenses in a tab with a summary.
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - ledgerId: The ledger ID to list expenses from
+      - tabId: The tab ID to list expenses from
       
       Use this when users want to see all expenses that have been recorded.
       `,
@@ -404,11 +404,11 @@ export const expenseSplitterActionProvider = () => {
     {
       name: "get_balances",
       description: `
-      This tool calculates and shows who owes what in a ledger.
+      This tool calculates and shows who owes what in a tab.
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - ledgerId: The ledger ID to calculate balances for
+      - tabId: The tab ID to calculate balances for
       
       Use this when users want to know the current balance status (who owes whom).
       `,
@@ -418,11 +418,11 @@ export const expenseSplitterActionProvider = () => {
     {
       name: "delete_expense",
       description: `
-      This tool deletes an expense from a ledger.
+      This tool deletes an expense from a tab.
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - ledgerId: The ledger ID containing the expense
+      - tabId: The tab ID containing the expense
       - expenseId: The ID of the expense to delete
       
       Use this when users want to correct a mistake by removing an expense.
@@ -437,7 +437,7 @@ export const expenseSplitterActionProvider = () => {
       
       It takes the following inputs:
       - groupId: The XMTP group ID
-      - ledgerId: The ledger ID to settle
+      - tabId: The tab ID to settle
       - tokenAddress: Optional token contract address (defaults to USDC for current network)
       
       This action:
