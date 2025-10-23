@@ -37,6 +37,11 @@ import { dumpMemory } from "./lib/utils";
 import { handleSettlementTransaction } from "./lib/settlement-tracker";
 import { ActionsCodec } from "./utils/inline-actions/types/ActionsContent";
 import { IntentCodec } from "./utils/inline-actions/types/IntentContent";
+import { inlineActionsMiddleware } from "./utils/inline-actions/inline-actions";
+import { 
+  showMainMenu, 
+  initializeExpenseMenuActions 
+} from "./utils/inline-actions/expense-menu";
 // Initialize environment variables
 dotenv.config();
 
@@ -254,11 +259,26 @@ async function main(): Promise<void> {
     dbPath: customDbPath,
   });
   
-  // Apply transaction reference middleware
+  // Initialize expense menu inline actions
+  initializeExpenseMenuActions();
+  
+  // Apply middlewares
   xmtpAgent.use(transactionReferenceMiddleware);
+  xmtpAgent.use(inlineActionsMiddleware);
 
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {
+    const text = ctx.message.content.trim();
+    
+    // Handle /info command in groups
+    if (text === "/info" || text.toLowerCase() === "/info") {
+      if (ctx.isGroup()) {
+        await showMainMenu(ctx);
+        return;
+      }
+      // In DMs, fall through to regular handler
+    }
+    
     await handleMessage(ctx);
   });
 
