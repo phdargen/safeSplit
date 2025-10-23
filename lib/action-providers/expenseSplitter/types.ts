@@ -3,6 +3,81 @@
  */
 
 /**
+ * Tab status representing the lifecycle of an expense tab.
+ */
+export type TabStatus = "open" | "settlement_proposed" | "settling" | "settled";
+
+/**
+ * Represents a single transaction within a settlement.
+ */
+export interface SettlementTransaction {
+  /**
+   * Unique identifier for this specific transaction.
+   */
+  id: string;
+
+  /**
+   * Inbox ID of the person who owes money.
+   */
+  fromInboxId: string;
+
+  /**
+   * Ethereum address of the person who owes money.
+   */
+  fromAddress: string;
+
+  /**
+   * Ethereum address of the person receiving money.
+   */
+  toAddress: string;
+
+  /**
+   * Amount to transfer.
+   */
+  amount: string;
+
+  /**
+   * Status of this transaction.
+   */
+  status: "pending" | "confirmed";
+
+  /**
+   * Transaction hash (once confirmed).
+   */
+  txHash?: string;
+
+  /**
+   * Timestamp when transaction was confirmed.
+   */
+  confirmedAt?: number;
+}
+
+/**
+ * Represents a settlement attempt for a tab.
+ */
+export interface SettlementRecord {
+  /**
+   * Unique identifier for this settlement.
+   */
+  id: string;
+
+  /**
+   * Timestamp when settlement was created.
+   */
+  createdAt: number;
+
+  /**
+   * Status of the settlement.
+   */
+  status: "proposed" | "in_progress" | "completed";
+
+  /**
+   * All transactions that need to be completed for this settlement.
+   */
+  transactions: SettlementTransaction[];
+}
+
+/**
  * Represents a single expense in a tab.
  */
 export interface Expense {
@@ -99,6 +174,16 @@ export interface ExpenseTab {
    * Default currency for this tab.
    */
   currency: string;
+
+  /**
+   * Current status of the tab.
+   */
+  status: TabStatus;
+
+  /**
+   * Current settlement in progress (if any).
+   */
+  currentSettlement?: SettlementRecord;
 }
 
 /**
@@ -219,6 +304,10 @@ export interface MultiTransactionPrepared {
       destinationAddress: string;
       tokenName?: string;
       tokenDecimals?: number;
+      groupId: string;
+      tabId: string;
+      settlementId: string;
+      settlementTransactionId: string;
     }>;
   }>;
 }

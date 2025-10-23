@@ -24,6 +24,8 @@
     "@langchain/openai": "^0.3.14",
     "@upstash/redis": "^1.35.6",
     "@xmtp/agent-sdk": "^1.1.7",
+    "@xmtp/content-type-primitives": "^2.0.2",
+    "@xmtp/content-type-reaction": "^2.0.2",
     "@xmtp/content-type-transaction-reference": "^2.0.2",
     "@xmtp/content-type-wallet-send-calls": "^2.0.0",
     "dotenv": "^16.4.5",

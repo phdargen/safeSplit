@@ -10,6 +10,8 @@ import {
   type WalletSendCallsParams,
 } from "@xmtp/content-type-wallet-send-calls";
 import type { TransactionPrepared, MultiTransactionPrepared } from "./action-providers";
+import { addPendingSettlementTransaction } from "./action-providers/expenseSplitter/storage";
+import { parseUnits } from "viem";
 
 /**
  * Send a single transaction request to the user
@@ -28,10 +30,12 @@ export async function sendSingleTransaction(
     return;
   }
 
+  console.log('sendSingleTransaction called with description:', transactionPrepared.description);
+
   const chainId = `0x${chain.id.toString(16)}` as `0x${string}`;
 
   const walletSendCalls: WalletSendCallsParams = {
-    version: "1.0",
+    version: "2.0",
     from: senderAddress as `0x${string}`,
     chainId: chainId,
     calls: transactionPrepared.calls.map(call => ({
@@ -47,6 +51,9 @@ export async function sendSingleTransaction(
         toAddress: transactionPrepared.metadata.destinationAddress,
         tokenAddress: transactionPrepared.metadata.tokenAddress,
       },
+      capabilities: {
+        paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL } as unknown as string,
+      } as const,
     })),
   };
 
@@ -136,7 +143,7 @@ export async function sendMultipleTransactions(
       const dm = await ctx.client.conversations.newDm(settlement.fromInboxId);
 
       const walletSendCalls: WalletSendCallsParams = {
-        version: "1.0",
+        version: "2.0",
         from: settlement.fromAddress as `0x${string}`,
         chainId: chainId,
         calls: settlement.calls.map((call, index) => ({
@@ -145,7 +152,14 @@ export async function sendMultipleTransactions(
           value: call.value as `0x${string}`,
           metadata: {
             description: settlement.metadata[index].description || settlement.description,
-            transactionType: "settlement",
+            // Encode custom settlement data in transactionType as JSON
+            transactionType: JSON.stringify({
+              type: "settlement",
+              groupId: settlement.metadata[index].groupId,
+              tabId: settlement.metadata[index].tabId,
+              settlementId: settlement.metadata[index].settlementId,
+              settlementTransactionId: settlement.metadata[index].settlementTransactionId,
+            }),
             currency: settlement.currency,
             amount: settlement.metadata[index].amount, 
             decimals: settlement.metadata[index].tokenDecimals?.toString() || "6",
@@ -171,6 +185,31 @@ export async function sendMultipleTransactions(
       // Send transaction request via DM
       await dm.send(walletSendCalls, ContentTypeWalletSendCalls);
 
+      // Store pending transaction metadata for each call
+      for (let i = 0; i < settlement.calls.length; i++) {
+        // Calculate the EXACT atomic amount that's being sent in the transaction
+        // This must match the calculation in prepareSettlementTransactions:
+        // parseUnits(settlement.amount, decimals) / BigInt(100)
+        const decimals = settlement.metadata[i].tokenDecimals || 6;
+        const amountInUnits = parseUnits(settlement.metadata[i].amount, decimals) / BigInt(100); // TO DO: remove this divide by 100, only for testing
+        const atomicAmount = amountInUnits.toString();
+        
+        console.log('settlement.metadata[i].amount', settlement.metadata[i].amount);
+        console.log('decimals', decimals);
+        console.log('amountInUnits', amountInUnits);
+        console.log('atomicAmount', atomicAmount);
+        
+        await addPendingSettlementTransaction(settlement.fromInboxId, {
+          groupId: settlement.metadata[i].groupId,
+          tabId: settlement.metadata[i].tabId,
+          settlementId: settlement.metadata[i].settlementId,
+          settlementTransactionId: settlement.metadata[i].settlementTransactionId,
+          toAddress: settlement.metadata[i].destinationAddress, // Recipient address, not token address
+          amount: atomicAmount, // EXACT atomic units matching the encoded transaction
+          tokenAddress: settlement.metadata[i].tokenAddress,
+        });
+      }
+
       console.log(`✅ Sent ${settlement.calls.length} batched settlement call(s) to ${settlement.fromInboxId.slice(0, 8)}... via DM`);
     } catch (error) {
       console.error(`Error sending settlement to ${settlement.fromInboxId}:`, error);
@@ -182,7 +221,7 @@ export async function sendMultipleTransactions(
   for (const settlement of failedDMs) {
     try {
       const walletSendCalls: WalletSendCallsParams = {
-        version: "1.0",
+        version: "2.0",
         from: settlement.fromAddress as `0x${string}`,
         chainId: chainId,
         calls: settlement.calls.map((call, index) => ({
@@ -191,7 +230,14 @@ export async function sendMultipleTransactions(
           value: call.value as `0x${string}`,
           metadata: {
             description: settlement.metadata[index].description || settlement.description,
-            transactionType: "settlement",
+            // Encode custom settlement data in transactionType as JSON
+            transactionType: JSON.stringify({
+              type: "settlement",
+              groupId: settlement.metadata[index].groupId,
+              tabId: settlement.metadata[index].tabId,
+              settlementId: settlement.metadata[index].settlementId,
+              settlementTransactionId: settlement.metadata[index].settlementTransactionId,
+            }),
             currency: settlement.currency,
             amount: settlement.metadata[index].amount,
             decimals: settlement.metadata[index].tokenDecimals?.toString() || "6",
@@ -216,6 +262,26 @@ export async function sendMultipleTransactions(
 
       // Send transaction request in group chat
       await ctx.conversation.send(walletSendCalls, ContentTypeWalletSendCalls);
+
+      // Store pending transaction metadata for each call
+      for (let i = 0; i < settlement.calls.length; i++) {
+        // Calculate the EXACT atomic amount that's being sent in the transaction
+        // This must match the calculation in prepareSettlementTransactions:
+        // parseUnits(settlement.amount, decimals) / BigInt(100)
+        const decimals = settlement.metadata[i].tokenDecimals || 6;
+        const amountInUnits = parseUnits(settlement.metadata[i].amount, decimals) / BigInt(100);
+        const atomicAmount = amountInUnits.toString();
+        
+        await addPendingSettlementTransaction(settlement.fromInboxId, {
+          groupId: settlement.metadata[i].groupId,
+          tabId: settlement.metadata[i].tabId,
+          settlementId: settlement.metadata[i].settlementId,
+          settlementTransactionId: settlement.metadata[i].settlementTransactionId,
+          toAddress: settlement.metadata[i].destinationAddress, // Recipient address, not token address
+          amount: atomicAmount, // EXACT atomic units matching the encoded transaction
+          tokenAddress: settlement.metadata[i].tokenAddress,
+        });
+      }
 
       console.log(`✅ Sent ${settlement.calls.length} batched settlement call(s) to ${settlement.fromAddress.slice(0, 8)}... in group chat`);
     } catch (error) {

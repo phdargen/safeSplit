@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-import { Agent as XMTPAgent, type MessageContext, type AgentMiddleware, IdentifierKind, GroupMember } from "@xmtp/agent-sdk";
+import { Agent as XMTPAgent, type MessageContext, type AgentMiddleware} from "@xmtp/agent-sdk";
 import {
   TransactionReferenceCodec,
   ContentTypeTransactionReference,
@@ -9,6 +9,11 @@ import {
 import {
   WalletSendCallsCodec,
 } from "@xmtp/content-type-wallet-send-calls";
+import {
+  ContentTypeReaction,
+  ReactionCodec,
+  type Reaction,
+} from "@xmtp/content-type-reaction";
 import type { TransactionPrepared, MultiTransactionPrepared } from "./lib/action-providers";
 import { 
   initializeAgent, 
@@ -29,7 +34,9 @@ import { validateEnvironment } from "./lib/environment";
 import { USDC_ADDRESSES } from "./lib/constants";
 import { MemorySaver } from "@langchain/langgraph";
 import { dumpMemory } from "./lib/utils";
-
+import { handleSettlementTransaction } from "./lib/settlement-tracker";
+import { ActionsCodec } from "./utils/inline-actions/types/ActionsContent";
+import { IntentCodec } from "./utils/inline-actions/types/IntentContent";
 // Initialize environment variables
 dotenv.config();
 
@@ -192,13 +199,21 @@ const transactionReferenceMiddleware: AgentMiddleware = async (ctx, next) => {
   if (ctx.message.contentType?.sameAs(ContentTypeTransactionReference)) {
     const transactionRef = ctx.message.content as TransactionReference;
 
-    console.log(`\n✅ Transaction confirmed: ${transactionRef.reference}`);
+    console.log('ctx.message', ctx.message);
+    console.log(`Received transaction reference: ${transactionRef}`);
 
+    // Check if this is a settlement transaction (will query Redis internally)
+    const wasHandled = await handleSettlementTransaction(ctx, transactionRef);
+
+    if (wasHandled) {
+      return; // Settlement was handled
+    }
+
+    // Standard transaction confirmation (non-settlement)
     await ctx.sendText(
       `✅ Transaction confirmed!\n` +
         `🔗 Network: ${transactionRef.networkId}\n` +
-        `📄 Hash: ${transactionRef.reference}\n` +
-        `\nThank you for using the external wallet agent!`,
+        `📄 Hash: ${transactionRef.reference}` 
     );
 
     return;
@@ -229,12 +244,16 @@ async function main(): Promise<void> {
   groupMemory = initializedGroupMemory;
   console.log("✅ Group agent ready\n");
 
-  // Create XMTP agent with transaction codecs
+  // Create agent with necessary codecs
+  const inboxId = process.env.AGENT_INBOX_ID || "1aa6e52fe4c8f6d5d58e1821e70227527bf18c44f8261c420952bab63e717ff0";
+  const customDbPath = `${process.env.RAILWAY_VOLUME_MOUNT_PATH ?? '.'}/xmtp-${process.env.XMTP_ENV}-${inboxId}.db3`;
+   
   const xmtpAgent = await XMTPAgent.createFromEnv({
     env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
-    codecs: [new WalletSendCallsCodec(), new TransactionReferenceCodec()],
+    codecs: [new WalletSendCallsCodec(), new TransactionReferenceCodec(), new ReactionCodec(), new ActionsCodec(), new IntentCodec()],
+    dbPath: customDbPath,
   });
-
+  
   // Apply transaction reference middleware
   xmtpAgent.use(transactionReferenceMiddleware);
 

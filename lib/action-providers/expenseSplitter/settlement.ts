@@ -125,7 +125,11 @@ function multiplyByNegativeOne(amount: string): string {
 export function prepareSettlementTransactions(
   settlements: Settlement[],
   tokenAddress: `0x${string}`,
-  decimals: number
+  decimals: number,
+  groupId: string,
+  tabId: string,
+  settlementId: string,
+  settlementTransactionIds: string[]
 ): Array<{
   settlement: Settlement;
   call: {
@@ -139,11 +143,18 @@ export function prepareSettlementTransactions(
     destinationAddress: string;
     tokenName: string;
     tokenDecimals: number;
+    groupId: string;
+    tabId: string;
+    settlementId: string;
+    settlementTransactionId: string;
   };
 }> {
   const transactions = [];
 
-  for (const settlement of settlements) {
+  for (let i = 0; i < settlements.length; i++) {
+    const settlement = settlements[i];
+    const transactionId = settlementTransactionIds[i];
+
     // Convert amount to token units using correct decimals
     const amountInUnits = parseUnits(settlement.amount, decimals)/ BigInt(100); // TO DO: remove this divide by 100, only for testing
 
@@ -167,6 +178,10 @@ export function prepareSettlementTransactions(
         destinationAddress: settlement.toAddress,
         tokenName: settlement.currency,
         tokenDecimals: decimals,
+        groupId,
+        tabId,
+        settlementId,
+        settlementTransactionId: transactionId,
       },
     });
   }

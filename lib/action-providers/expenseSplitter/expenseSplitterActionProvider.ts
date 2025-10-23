@@ -8,7 +8,7 @@ import {
   DeleteExpenseSchema,
   SettleExpensesSchema,
 } from "./schemas";
-import { MultiTransactionPrepared, Expense } from "./types";
+import { MultiTransactionPrepared, Expense, SettlementTransaction, SettlementRecord } from "./types";
 import { generateId, getUSDCDetails, parseAmount, formatCurrency, addAmounts } from "./utils";
 import {
   createTab,
@@ -16,6 +16,7 @@ import {
   listTabs,
   addExpense as addExpenseToStorage,
   deleteExpense as deleteExpenseFromStorage,
+  updateTab,
 } from "./storage";
 import {
   calculateTotalExpenses,
@@ -103,6 +104,7 @@ async function listExpenseTabs(
         totalAmount,
         participantAddresses: tab.participants.map(p => p.address),
         createdAt: tab.createdAt,
+        status: tab.status,
       };
     });
 
@@ -132,6 +134,19 @@ async function addExpense(
       return JSON.stringify({
         success: false,
         message: `Tab ${args.tabId} not found in group ${args.groupId}`,
+      });
+    }
+
+    // Check tab status
+    if (tab.status === "settlement_proposed") {
+      // Allow, but reset to open
+      tab.status = "open";
+      tab.currentSettlement = undefined;
+      await updateTab(args.groupId, args.tabId, tab);
+    } else if (tab.status === "settling" || tab.status === "settled") {
+      return JSON.stringify({
+        success: false,
+        message: `Cannot add expenses - tab is ${tab.status}. Please create a new tab.`,
       });
     }
 
@@ -313,6 +328,20 @@ async function getTabInfo(
       tab.participants.map(p => resolveAddressToDisplayName(p.address))
     );
 
+    // Format settlement info if present
+    let settlementInfo;
+    if (tab.currentSettlement) {
+      const confirmedCount = tab.currentSettlement.transactions.filter(t => t.status === "confirmed").length;
+      const totalCount = tab.currentSettlement.transactions.length;
+      settlementInfo = {
+        id: tab.currentSettlement.id,
+        status: tab.currentSettlement.status,
+        createdAt: tab.currentSettlement.createdAt,
+        transactionsConfirmed: confirmedCount,
+        transactionsTotal: totalCount,
+      };
+    }
+
     return JSON.stringify({
       success: true,
       data: {
@@ -322,10 +351,12 @@ async function getTabInfo(
           currency: tab.currency,
           participants: participantDisplayNames,
           createdAt: tab.createdAt,
+          status: tab.status,
         },
         expenses,
         totalExpenses,
         balances: balancesWithDisplayNames,
+        settlement: settlementInfo,
       },
       message: `Tab "${tab.name}" has ${expenses.length} expense(s)`,
     });
@@ -373,6 +404,21 @@ async function settleExpenses(
       return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
     }
 
+    // Check tab status
+    if (tab.status === "settling") {
+      return JSON.stringify({
+        success: false,
+        message: `Tab "${tab.name}" is already settling. Cannot propose a new settlement.`,
+      });
+    }
+
+    if (tab.status === "settled") {
+      return JSON.stringify({
+        success: false,
+        message: `Tab "${tab.name}" is already settled. Please create a new tab for new expenses.`,
+      });
+    }
+
     if (tab.expenses.length === 0) {
       return `No expenses in tab "${tab.name}". Nothing to settle!`;
     }
@@ -399,11 +445,42 @@ async function settleExpenses(
       return `✅ All settled! Everyone has paid their fair share.`;
     }
 
-    // Prepare transactions
+    // Generate settlement ID and transaction IDs
+    const settlementId = generateId();
+    const settlementTransactionIds = settlements.map(() => generateId());
+
+    // Create settlement transactions for tracking
+    const settlementTransactions: SettlementTransaction[] = settlements.map((settlement, index) => ({
+      id: settlementTransactionIds[index],
+      fromInboxId: settlement.fromInboxId,
+      fromAddress: settlement.fromAddress,
+      toAddress: settlement.toAddress,
+      amount: settlement.amount,
+      status: "pending" as const,
+    }));
+
+    // Create settlement record
+    const settlementRecord: SettlementRecord = {
+      id: settlementId,
+      createdAt: Date.now(),
+      status: "proposed",
+      transactions: settlementTransactions,
+    };
+
+    // Update tab with settlement record and status
+    tab.currentSettlement = settlementRecord;
+    tab.status = "settlement_proposed";
+    await updateTab(args.groupId, args.tabId, tab);
+
+    // Prepare transactions with metadata
     const transactions = prepareSettlementTransactions(
       settlements,
       tokenDetails.address,
-      tokenDetails.decimals
+      tokenDetails.decimals,
+      args.groupId,
+      args.tabId,
+      settlementId,
+      settlementTransactionIds
     );
 
     // Group transactions by sender (fromInboxId) to batch calls

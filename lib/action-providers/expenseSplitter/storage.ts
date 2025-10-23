@@ -62,6 +62,7 @@ export async function createTab(
     expenses: [],
     createdAt: Date.now(),
     currency,
+    status: "open",
   };
 
   const tabKey = getTabKey(groupId, tabId);
@@ -210,5 +211,144 @@ export async function updateExpense(
   await redis.set(tabKey, tab);
 
   return tab;
+}
+
+/**
+ * Update a tab in storage.
+ */
+export async function updateTab(
+  groupId: string,
+  tabId: string,
+  tab: ExpenseTab
+): Promise<ExpenseTab> {
+  if (!redis) {
+    throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
+  }
+
+  const tabKey = getTabKey(groupId, tabId);
+  await redis.set(tabKey, tab);
+
+  return tab;
+}
+
+/**
+ * Update settlement transaction status.
+ */
+export async function updateSettlementTransaction(
+  groupId: string,
+  tabId: string,
+  settlementId: string,
+  transactionId: string,
+  txHash: string
+): Promise<ExpenseTab> {
+  if (!redis) {
+    throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
+  }
+
+  const tab = await getTab(groupId, tabId);
+  if (!tab) {
+    throw new Error(`Tab not found: ${tabId}`);
+  }
+
+  if (!tab.currentSettlement || tab.currentSettlement.id !== settlementId) {
+    throw new Error(`Settlement not found: ${settlementId}`);
+  }
+
+  const transaction = tab.currentSettlement.transactions.find(t => t.id === transactionId);
+  if (!transaction) {
+    throw new Error(`Transaction not found: ${transactionId}`);
+  }
+
+  // Update transaction status
+  transaction.status = "confirmed";
+  transaction.txHash = txHash;
+  transaction.confirmedAt = Date.now();
+
+  // Check if this is the first confirmed transaction
+  const confirmedCount = tab.currentSettlement.transactions.filter(t => t.status === "confirmed").length;
+  if (confirmedCount === 1 && tab.status === "settlement_proposed") {
+    // First transaction confirmed - move to settling
+    tab.status = "settling";
+    tab.currentSettlement.status = "in_progress";
+  } else if (confirmedCount === tab.currentSettlement.transactions.length) {
+    // All transactions confirmed - mark as settled
+    tab.status = "settled";
+    tab.currentSettlement.status = "completed";
+  }
+
+  // Save updated tab
+  const tabKey = getTabKey(groupId, tabId);
+  await redis.set(tabKey, tab);
+
+  return tab;
+}
+
+/**
+ * Store pending settlement transaction for later matching.
+ */
+export async function addPendingSettlementTransaction(
+  inboxId: string,
+  metadata: {
+    groupId: string;
+    tabId: string;
+    settlementId: string;
+    settlementTransactionId: string;
+    toAddress: string;
+    amount: string;
+    tokenAddress: string;
+  }
+): Promise<void> {
+  if (!redis) {
+    throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
+  }
+
+  const key = `pendingSettlementTx:${inboxId}`;
+  await redis.rpush(key, JSON.stringify(metadata));
+  await redis.expire(key, 86400); // 24 hour TTL
+}
+
+/**
+ * Find and remove matching pending settlement transaction.
+ */
+export async function findAndRemovePendingTransaction(
+  inboxId: string,
+  toAddress: string,
+  amount: string
+): Promise<{
+  groupId: string;
+  tabId: string;
+  settlementId: string;
+  settlementTransactionId: string;
+} | null> {
+  if (!redis) {
+    throw new Error("Redis not configured. Please set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.");
+  }
+
+  const key = `pendingSettlementTx:${inboxId}`;
+  const pending = await redis.lrange(key, 0, -1);
+
+  if (!pending || pending.length === 0) {
+    return null;
+  }
+
+  // Find matching transaction
+  for (let i = 0; i < pending.length; i++) {
+    // Upstash Redis automatically deserializes JSON, so pending[i] might already be an object
+    const tx = typeof pending[i] === 'string' ? JSON.parse(pending[i] as string) : pending[i];
+    
+    if (tx.toAddress.toLowerCase() === toAddress.toLowerCase() && tx.amount === amount) {
+      // Remove from list (need to re-stringify if it was an object)
+      const itemToRemove = typeof pending[i] === 'string' ? pending[i] : JSON.stringify(pending[i]);
+      await redis.lrem(key, 1, itemToRemove);
+      return {
+        groupId: tx.groupId,
+        tabId: tx.tabId,
+        settlementId: tx.settlementId,
+        settlementTransactionId: tx.settlementTransactionId,
+      };
+    }
+  }
+
+  return null;
 }
 
