@@ -9,6 +9,9 @@ This example demonstrates an XMTP agent that **prepares transactions for user ap
 - **Balance Checking**: Check user's token balances on-chain
 - **XMTP Integration**: Seamless messaging with transaction requests
 - **WalletSendCalls**: Uses XMTP's transaction request content type
+- **Identity Resolution**: Support for ENS names and Basenames (auto-appends .base.eth)
+- **Expense Splitting**: Track and settle shared expenses in group chats
+- **Human-Readable Names**: All outputs show display names instead of addresses
 
 ## 🔄 How It Works
 
@@ -35,10 +38,35 @@ This example demonstrates an XMTP agent that **prepares transactions for user ap
 
 Once your agent is running, send these messages via XMTP:
 
+### Basic Commands
 - `"Check my USDC balance"`
 - `"What's my wallet balance?"`
 - `"Send 1 USDC to 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"`
-- `"Transfer 5 USDC to vitalik.eth"` (if ENS is supported)
+
+### With Identity Resolution
+- `"Send 5 USDC to alice"` (auto-resolves to alice.base.eth)
+- `"Transfer 10 USDC to vitalik.eth"` (ENS name)
+- `"Send 2 USDC to bob.base.eth"` (Basename)
+
+### Expense Splitting (in groups)
+- `"Create a tab called Weekend Trip"`
+- `"I paid $20 for dinner"`
+- `"Alice paid $15 for drinks, split between alice and bob"`
+- `"Show tab info"`
+- `"Settle expenses"`
+
+## 👤 Identity Resolution
+
+The agent supports human-readable identifiers for all operations:
+
+- **Short names**: `alice` (automatically becomes `alice.base.eth`)
+- **Basenames**: `alice.base.eth`, `username.base.eth`
+- **ENS names**: `vitalik.eth`, `ens.eth`
+- **Ethereum addresses**: `0x1234...` (traditional)
+
+**Auto-append feature**: Any name without a `.eth` suffix automatically gets `.base.eth` appended for convenience.
+
+The system automatically resolves these identifiers and displays ENS/Basename names instead of addresses in all outputs.
 
 ## 📋 Prerequisites
 
@@ -86,10 +114,15 @@ OPENAI_API_KEY=your_openai_api_key_here
 XMTP_WALLET_KEY=0x...  # From gen:keys
 XMTP_DB_ENCRYPTION_KEY=...  # From gen:keys
 
+# Required for Expense Tracking
+UPSTASH_REDIS_REST_URL=https://your-redis-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_redis_token_here
+
 # Optional
 XMTP_ENV=dev  # or "production"
 NETWORK_ID=base-sepolia  # or "base-mainnet", "ethereum-mainnet", etc.
 RPC_URL=  # Custom RPC URL (optional)
+LLM_MODEL=gpt-4o-mini  # or "gpt-4", etc.
 ```
 
 ## 🛠️ Installation & Running

@@ -46,12 +46,11 @@ export const AddExpenseSchema = z
       .describe("Description of what the expense was for (e.g., 'beer', 'dinner', 'hotel')"),
     payerAddress: z
       .string()
-      .regex(/^0x[a-fA-F0-9]{40}$/i, "Invalid Ethereum address format")
-      .describe("Ethereum address of the person who paid for this expense. Can be any participant in the tab."),
+      .describe("Ethereum address, ENS name, or Basename of the person who paid. If no .eth suffix, automatically appends .base.eth"),
     participantAddresses: z
-      .array(z.string().regex(/^0x[a-fA-F0-9]{40}$/i, "Invalid Ethereum address format"))
+      .array(z.string())
       .optional()
-      .describe("Optional array of Ethereum addresses for people sharing this expense. If not provided, defaults to all tab participants."),
+      .describe("Optional array of identifiers (Ethereum addresses, ENS names, or Basenames) for people sharing this expense. If not provided, defaults to all tab participants. Names without .eth suffix automatically get .base.eth appended"),
   })
   .strip()
   .describe("Instructions for adding an expense to a tab");

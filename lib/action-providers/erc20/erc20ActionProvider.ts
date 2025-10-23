@@ -4,6 +4,7 @@ import { GetBalanceSchema, PrepareTransferSchema } from "./schemas";
 import { TransactionPrepared } from "./types";
 import { getTokenDetails } from "./utils";
 import { encodeFunctionData, Hex, getAddress, erc20Abi, parseUnits } from "viem";
+import { resolveIdentifierToAddress, resolveAddressToDisplayName } from "../../identity-resolver";
 
 /**
  * Gets the balance of an ERC20 token for a user's wallet address.
@@ -39,6 +40,17 @@ async function prepareTransfer(
   args: z.infer<typeof PrepareTransferSchema>,
 ): Promise<string> {
   try {
+    // Resolve destination identifier to address
+    let destinationAddress: string;
+    try {
+      destinationAddress = await resolveIdentifierToAddress(args.destinationAddress);
+    } catch (error) {
+      return `Error: Could not resolve destination identifier "${args.destinationAddress}": ${error}`;
+    }
+
+    // Get destination display name for user-friendly messages
+    const destinationDisplayName = await resolveAddressToDisplayName(destinationAddress);
+
     // Validate and normalize token address
     const tokenAddress = getAddress(args.tokenAddress);
 
@@ -62,20 +74,20 @@ async function prepareTransfer(
     }
 
     // Guardrails to prevent loss of funds
-    if (args.tokenAddress.toLowerCase() === args.destinationAddress.toLowerCase()) {
+    if (args.tokenAddress.toLowerCase() === destinationAddress.toLowerCase()) {
       return "Error: Transfer destination is the token contract address. Refusing to prepare transaction to prevent loss of funds.";
     }
 
     // Check if destination is a contract
     const destinationCode = await walletProvider.getPublicClient().getCode({
-      address: args.destinationAddress as Hex,
+      address: destinationAddress as Hex,
     });
 
     if (destinationCode && destinationCode !== "0x") {
       // Check if it's an ERC20 token contract
       const destTokenDetails = await getTokenDetails(
         walletProvider,
-        args.destinationAddress,
+        destinationAddress,
         args.userAddress,
       );
       if (destTokenDetails) {
@@ -88,13 +100,13 @@ async function prepareTransfer(
     const transferData = encodeFunctionData({
       abi: erc20Abi,
       functionName: "transfer",
-      args: [args.destinationAddress as Hex, amountInUnits],
+      args: [destinationAddress as Hex, amountInUnits],
     });
 
-    // Return structured response that will be parsed by the chatbot
+    // Return structured response that will be parsed by the chatbot (with display name)
     const response: TransactionPrepared = {
       type: "TRANSACTION_PREPARED",
-      description: `Transfer ${args.amount} ${tokenDetails.name} to ${args.destinationAddress}`,
+      description: `Transfer ${args.amount} ${tokenDetails.name} to ${destinationDisplayName}`,
       calls: [
         {
           to: tokenAddress,
@@ -105,7 +117,8 @@ async function prepareTransfer(
       metadata: {
         tokenAddress,
         amount: args.amount,
-        destinationAddress: args.destinationAddress,
+        destinationAddress,
+        destinationDisplayName,
         tokenName: tokenDetails.name,
         tokenDecimals: tokenDetails.decimals,
       },

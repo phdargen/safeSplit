@@ -6,6 +6,7 @@ import * as fs from "fs";
 import type { MessageContext, GroupMember } from "@xmtp/agent-sdk";
 import { IdentifierKind } from "@xmtp/agent-sdk";
 import { STORAGE_DIR } from "./constants";
+import { resolveAddressToDisplayName } from "./identity-resolver";
 
 export interface UserSession {
   inboxId: string;
@@ -19,6 +20,7 @@ export interface ConversationSession {
   participants: Array<{
     inboxId: string;
     ethereumAddress?: string;
+    displayName?: string; // Cached display name for identity resolution
   }>;
   lastActiveTabId?: string; // For groups
   groupName?: string; // For groups
@@ -128,6 +130,36 @@ function extractParticipants(members: GroupMember[]): Array<{
 }
 
 /**
+ * Extract participants with display names resolved.
+ */
+async function extractParticipantsWithDisplayNames(members: GroupMember[]): Promise<Array<{
+  inboxId: string;
+  ethereumAddress?: string;
+  displayName?: string;
+}>> {
+  // const { resolveAddressToDisplayName } = await import("./identity-resolver");
+  
+  return Promise.all(members.map(async (member) => {
+    const ethereumAddress = extractEthereumAddress(member);
+    let displayName: string | undefined;
+    
+    if (ethereumAddress) {
+      try {
+        displayName = await resolveAddressToDisplayName(ethereumAddress);
+      } catch (error) {
+        console.warn(`Could not resolve display name for ${ethereumAddress}:`, error);
+      }
+    }
+    
+    return {
+      inboxId: member.inboxId,
+      ethereumAddress,
+      displayName,
+    };
+  }));
+}
+
+/**
  * Initialize or refresh conversation session by fetching all members and metadata from XMTP.
  * This function should be called when a thread is first encountered in the current session.
  */
@@ -139,9 +171,9 @@ export async function initializeConversationSession(
   try {
     const conversationId = ctx.conversation.id;
     
-    // Fetch all members
+    // Fetch all members with display names resolved
     const members = await ctx.conversation.members();
-    const participants = extractParticipants(members);
+    const participants = await extractParticipantsWithDisplayNames(members);
     
     // Get group metadata if it's a group conversation
     let groupName: string | undefined;
@@ -197,9 +229,9 @@ export async function updateSessionMembers(
       return;
     }
     
-    // Refresh all members to get their Ethereum addresses
+    // Refresh all members with display names
     const members = await ctx.conversation.members();
-    session.participants = extractParticipants(members);
+    session.participants = await extractParticipantsWithDisplayNames(members);
     session.lastSeen = new Date();
     
     saveConversationSession(threadId, true, session);

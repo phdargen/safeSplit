@@ -2,6 +2,7 @@ import { z } from "zod";
 import { customActionProvider, EvmWalletProvider } from "@coinbase/agentkit";
 import { ListGroupInfoSchema } from "./schemas";
 import { getGroupInfo } from "./utils";
+import { resolveAddressToDisplayName } from "../../identity-resolver";
 
 /**
  * List comprehensive information about an XMTP group.
@@ -28,9 +29,11 @@ async function listGroupInfo(
     
     output += `\n👥 Group Members:\n\n`;
     
+    // Resolve display names for all members
     for (let i = 0; i < members.length; i++) {
       const member = members[i];
-      output += `${i + 1}. Address: ${member.address}\n`;
+      const displayName = await resolveAddressToDisplayName(member.address);
+      output += `${i + 1}. ${displayName}\n`;
       output += `   Inbox ID: ${member.inboxId}\n\n`;
     }
 

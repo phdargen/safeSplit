@@ -18,7 +18,6 @@ import {
   deleteExpense as deleteExpenseFromStorage,
 } from "./storage";
 import {
-  calculateBalances,
   calculateTotalExpenses,
   calculateDetailedBalances,
 } from "./tab";
@@ -28,6 +27,7 @@ import {
   prepareSettlementTransactions,
 } from "./settlement";
 import { getGroupMembers } from "../xmtp/utils";
+import { resolveIdentifierToAddress, resolveAddressToDisplayName } from "../../identity-resolver";
 
 /**
  * Create a new expense tab in a group.
@@ -138,14 +138,26 @@ async function addExpense(
     // Validate amount
     const amount = parseAmount(args.amount);
 
-    // Get payer information by address
-    const normalizedPayerAddress = args.payerAddress.toLowerCase();
+    // Resolve payer identifier to address
+    let payerAddress: string;
+    try {
+      payerAddress = await resolveIdentifierToAddress(args.payerAddress);
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        message: `Could not resolve payer identifier "${args.payerAddress}": ${error}`,
+      });
+    }
+
+    // Get payer information by resolved address
+    const normalizedPayerAddress = payerAddress.toLowerCase();
     const payer = tab.participants.find(p => p.address === normalizedPayerAddress);
     
     if (!payer) {
+      const payerDisplayName = await resolveAddressToDisplayName(payerAddress);
       return JSON.stringify({
         success: false,
-        message: `Address ${args.payerAddress} is not a participant in this tab`,
+        message: `${payerDisplayName} is not a participant in this tab`,
       });
     }
 
@@ -153,24 +165,38 @@ async function addExpense(
     let participantInboxIds: string[];
     
     if (args.participantAddresses && args.participantAddresses.length > 0) {
-      // Subset of participants specified by addresses
-      const normalizedAddresses = args.participantAddresses.map(addr => addr.toLowerCase());
+      // Resolve participant identifiers to addresses
+      const resolvedAddresses: string[] = [];
+      for (const identifier of args.participantAddresses) {
+        try {
+          const address = await resolveIdentifierToAddress(identifier);
+          resolvedAddresses.push(address.toLowerCase());
+        } catch (error) {
+          return JSON.stringify({
+            success: false,
+            message: `Could not resolve participant identifier "${identifier}": ${error}`,
+          });
+        }
+      }
       
       // Validate all addresses exist in tab participants
-      const invalidAddresses = normalizedAddresses.filter(
+      const invalidAddresses = resolvedAddresses.filter(
         addr => !tab.participants.some(p => p.address === addr)
       );
       
       if (invalidAddresses.length > 0) {
+        const displayNames = await Promise.all(
+          invalidAddresses.map(addr => resolveAddressToDisplayName(addr))
+        );
         return JSON.stringify({
           success: false,
-          message: `The following addresses are not participants in this tab: ${invalidAddresses.join(", ")}`,
+          message: `The following are not participants in this tab: ${displayNames.join(", ")}`,
         });
       }
       
       // Convert addresses to inboxIds
       participantInboxIds = tab.participants
-        .filter(p => normalizedAddresses.includes(p.address))
+        .filter(p => resolvedAddresses.includes(p.address))
         .map(p => p.inboxId);
     } else {
       // Default to all tab participants
@@ -198,10 +224,16 @@ async function addExpense(
 
     await addExpenseToStorage(args.groupId, args.tabId, expense);
 
-    // Get participant addresses for this expense
+    // Get participant display names for response
     const expenseParticipantAddresses = tab.participants
       .filter(p => participantInboxIds.includes(p.inboxId))
       .map(p => p.address);
+    
+    const participantDisplayNames = await Promise.all(
+      expenseParticipantAddresses.map(addr => resolveAddressToDisplayName(addr))
+    );
+    
+    const payerDisplayName = await resolveAddressToDisplayName(payer.address);
 
     return JSON.stringify({
       success: true,
@@ -209,10 +241,10 @@ async function addExpense(
         expenseId: expense.id,
         amount,
         description: args.description,
-        payerAddress: payer.address,
-        participantAddresses: expenseParticipantAddresses,
+        payerDisplayName,
+        participantDisplayNames,
       },
-      message: `Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}"`,
+      message: `Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}" paid by ${payerDisplayName}`,
     });
   } catch (error) {
     return JSON.stringify({
@@ -241,25 +273,45 @@ async function getTabInfo(
     // Calculate total expenses
     const totalExpenses = calculateTotalExpenses(tab.expenses);
 
-    // Format expenses
-    const expenses = tab.expenses.map((expense) => {
+    // Format expenses with display names
+    const expenses = await Promise.all(tab.expenses.map(async (expense) => {
       // Get participant addresses for this expense
       const participantAddresses = tab.participants
         .filter(p => expense.participantInboxIds.includes(p.inboxId))
         .map(p => p.address);
       
+      // Resolve to display names
+      const payerDisplayName = await resolveAddressToDisplayName(expense.payerAddress);
+      const participantDisplayNames = await Promise.all(
+        participantAddresses.map(addr => resolveAddressToDisplayName(addr))
+      );
+      
       return {
         id: expense.id,
         amount: expense.amount,
         description: expense.description,
-        payerAddress: expense.payerAddress,
-        participantAddresses,
+        payer: payerDisplayName,
+        participants: participantDisplayNames,
         timestamp: expense.timestamp,
       };
-    });
+    }));
 
-    // Calculate detailed balances
+    // Calculate detailed balances with display names
     const balances = calculateDetailedBalances(tab.expenses, tab.participants);
+    const balancesWithDisplayNames = await Promise.all(balances.map(async (balance) => {
+      const displayName = await resolveAddressToDisplayName(balance.address);
+      return {
+        displayName,
+        totalPaid: balance.totalPaid,
+        netSettlement: balance.netSettlement,
+        status: balance.status,
+      };
+    }));
+
+    // Get participant display names
+    const participantDisplayNames = await Promise.all(
+      tab.participants.map(p => resolveAddressToDisplayName(p.address))
+    );
 
     return JSON.stringify({
       success: true,
@@ -268,12 +320,12 @@ async function getTabInfo(
           id: tab.id,
           name: tab.name,
           currency: tab.currency,
-          participantAddresses: tab.participants.map(p => p.address),
+          participants: participantDisplayNames,
           createdAt: tab.createdAt,
         },
         expenses,
         totalExpenses,
-        balances,
+        balances: balancesWithDisplayNames,
       },
       message: `Tab "${tab.name}" has ${expenses.length} expense(s)`,
     });
@@ -365,25 +417,36 @@ async function settleExpenses(
       }
     }
 
-    // Build the multi-transaction response with batched calls per payer
-    const batchedSettlements = Array.from(settlementsByPayer.values()).map(txs => {
-      const firstTx = txs[0];
-      const totalAmount = txs.reduce((sum, tx) => sum + parseFloat(tx.settlement.amount), 0);
-      
-      return {
-        fromInboxId: firstTx.settlement.fromInboxId,
-        fromAddress: firstTx.settlement.fromAddress,
-        currency: firstTx.settlement.currency,
-        description: txs.length === 1
-          ? firstTx.settlement.description
-          : `Settlement: ${txs.length} payments totaling ${formatCurrency(totalAmount.toString(), firstTx.settlement.currency)}`,
-        calls: txs.map(tx => tx.call),
-        metadata: txs.map(tx => ({
-          ...tx.metadata,
-          description: tx.settlement.description, // Preserve individual description
-        })),
-      };
-    });
+    // Build the multi-transaction response with batched calls per payer (with display names)
+    const batchedSettlements = await Promise.all(
+      Array.from(settlementsByPayer.values()).map(async txs => {
+        const firstTx = txs[0];
+        const totalAmount = txs.reduce((sum, tx) => sum + parseFloat(tx.settlement.amount), 0);
+        
+        // Resolve display names for payer
+        const payerDisplayName = await resolveAddressToDisplayName(firstTx.settlement.fromAddress);
+        
+        // Build descriptions with display names
+        const descriptionsWithNames = await Promise.all(txs.map(async tx => {
+          const toDisplayName = await resolveAddressToDisplayName(tx.settlement.toAddress);
+          return `${payerDisplayName} → ${toDisplayName} (${formatCurrency(tx.settlement.amount, tx.settlement.currency)})`;
+        }));
+        
+        return {
+          fromInboxId: firstTx.settlement.fromInboxId,
+          fromAddress: firstTx.settlement.fromAddress,
+          currency: firstTx.settlement.currency,
+          description: txs.length === 1
+            ? descriptionsWithNames[0]
+            : `${payerDisplayName}: ${txs.length} payments totaling ${formatCurrency(totalAmount.toString(), firstTx.settlement.currency)}`,
+          calls: txs.map(tx => tx.call),
+          metadata: await Promise.all(txs.map(async (tx, idx) => ({
+            ...tx.metadata,
+            description: descriptionsWithNames[idx], // Use display name description
+          }))),
+        };
+      })
+    );
 
     const response: MultiTransactionPrepared = {
       type: "MULTI_TRANSACTION_PREPARED",

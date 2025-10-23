@@ -31,8 +31,7 @@ export const PrepareTransferSchema = z
       .describe("The contract address of the token to transfer"),
     destinationAddress: z
       .string()
-      .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address format")
-      .describe("The destination address to transfer the funds to"),
+      .describe("The destination to transfer funds to (Ethereum address, ENS name, or Basename). Names without .eth suffix automatically get .base.eth appended"),
     userAddress: z
       .string()
       .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address format")

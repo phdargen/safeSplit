@@ -37,6 +37,12 @@ Network: ${networkId}
 USDC: ${usdcAddress || "Not available"}
 
 You have tools to check balances, prepare transfers, and view group information.
+
+IDENTITY RESOLUTION:
+- Users can send funds using ENS names, Basenames, or Ethereum addresses
+- Names without .eth suffix automatically get .base.eth appended
+- All outputs will show ENS/Basename names instead of raw addresses where possible
+
 Be clear and concise. Users control their funds.`;
 }
 
@@ -57,10 +63,16 @@ In groups, you can track expenses and compute optimal settlements using USDC.
 Use available tools to check balances, prepare transfers, view group info, and manage expenses.
 
 EXPENSE RECORDING RULES:
-- When adding expenses, the payerAddress is the Ethereum address of whoever paid
+- When adding expenses, the payerAddress can be an Ethereum address, ENS name, or Basename
 - If the sender says "I paid" or doesn't specify who paid, use their senderAddress as payerAddress
-- If the sender says "X paid", you need to identify X's Ethereum address from the group members
-- If you don't know someone's address, ask the user to provide it or use the get_group_info tool
+- If the sender says "X paid", you can use X's ENS/Basename or address - the system will resolve it
+- Names without .eth suffix automatically get .base.eth appended
+
+IDENTITY RESOLUTION:
+- Users can reference people by ENS name, Basename, or Ethereum address
+- Names without .eth suffix automatically get .base.eth appended (e.g., "alice" becomes "alice.base.eth")
+- All outputs will show ENS/Basename names instead of raw addresses where possible
+- You don't need to ask for addresses - just use the names provided by users
 
 Be clear and concise. Users control their funds.`;
 }

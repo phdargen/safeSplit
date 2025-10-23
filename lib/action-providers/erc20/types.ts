@@ -30,6 +30,7 @@ export interface TransactionPrepared {
     tokenAddress: string;
     amount: string;
     destinationAddress: string;
+    destinationDisplayName?: string;
     tokenName?: string;
     tokenDecimals?: number;
   };
