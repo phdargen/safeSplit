@@ -9,7 +9,7 @@ import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { ChatOpenAI } from "@langchain/openai";
 import { privateKeyToAccount } from "viem/accounts";
 import { ReadOnlyEvmWalletProvider } from "./wallet-providers";
-import { erc20ActionProvider, expenseSplitterActionProvider, pollActionProvider, xmtpActionProvider } from "./action-providers";
+import { erc20ActionProvider, expenseSplitterActionProvider, pollActionProvider, walletActionProvider, xmtpActionProvider, zeroXActionProvider } from "./action-providers";
 import { USDC_ADDRESSES } from "./constants";
 import { SystemMessage } from "@langchain/core/messages";
 
@@ -142,11 +142,14 @@ export async function initializeAgent(conversationType: ConversationType): Promi
           ...erc20ActionProvider(), 
           ...expenseSplitterActionProvider(),
           ...pollActionProvider(),
+          ...walletActionProvider(),
           ...xmtpActionProvider(),
           pythActionProvider()
         ]
       : [
           ...erc20ActionProvider(),
+          ...walletActionProvider(),
+          ...zeroXActionProvider(),
           ...xmtpActionProvider(),
           pythActionProvider()
         ];

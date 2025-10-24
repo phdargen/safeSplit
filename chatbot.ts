@@ -22,7 +22,7 @@ import {
   AttachmentCodec,
   RemoteAttachmentCodec,
 } from "@xmtp/content-type-remote-attachment";
-import type { TransactionPrepared, MultiTransactionPrepared, PollPrepared } from "./lib/action-providers";
+import type { TransactionPrepared, MultiTransactionPrepared, SwapTransactionPrepared, PollPrepared } from "./lib/action-providers";
 import { 
   initializeAgent, 
   buildConversationContext, 
@@ -37,7 +37,7 @@ import {
   initializeConversationSession,
   updateSessionMembers,
 } from "./lib/session-manager";
-import { sendSingleTransaction, sendMultipleTransactions } from "./lib/transaction-handler";
+import { sendSingleTransaction, sendSwapTransaction, sendMultipleTransactions } from "./lib/transaction-handler";
 import { validateEnvironment } from "./lib/environment";
 import { USDC_ADDRESSES } from "./lib/constants";
 import { MemorySaver } from "@langchain/langgraph";
@@ -76,11 +76,13 @@ async function processMessage(
 ): Promise<{
   response: string;
   transactionPrepared?: TransactionPrepared;
+  swapTransactionPrepared?: SwapTransactionPrepared;
   multiTransactionPrepared?: MultiTransactionPrepared;
   pollPrepared?: PollPrepared;
 }> {
   let response = "";
   let transactionPrepared: TransactionPrepared | undefined;
+  let swapTransactionPrepared: SwapTransactionPrepared | undefined;
   let multiTransactionPrepared: MultiTransactionPrepared | undefined;
   let pollPrepared: PollPrepared | undefined;
 
@@ -101,6 +103,9 @@ async function processMessage(
               if (parsed.type === "TRANSACTION_PREPARED") {
                 console.log("🔧 Transaction prepared by tool:", parsed.description);
                 transactionPrepared = parsed;
+              } else if (parsed.type === "SWAP_TRANSACTION_PREPARED") {
+                console.log("🔧 Swap transaction prepared by tool:", parsed.description);
+                swapTransactionPrepared = parsed;
               } else if (parsed.type === "MULTI_TRANSACTION_PREPARED") {
                 console.log("🔧 Multi-transaction prepared by tool:", parsed.description);
                 multiTransactionPrepared = parsed;
@@ -120,6 +125,7 @@ async function processMessage(
     return {
       response: response.trim(),
       transactionPrepared,
+      swapTransactionPrepared,
       multiTransactionPrepared,
       pollPrepared,
     };
@@ -229,6 +235,8 @@ async function handleMessage(ctx: MessageContext) {
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
       await sendMultipleTransactions(ctx, result.multiTransactionPrepared, result.response);
+    } else if (result.swapTransactionPrepared) {
+      await sendSwapTransaction(ctx, result.swapTransactionPrepared, senderAddress, result.response);
     } else if (result.transactionPrepared) {
       await sendSingleTransaction(ctx, result.transactionPrepared, senderAddress, result.response);
     } else {

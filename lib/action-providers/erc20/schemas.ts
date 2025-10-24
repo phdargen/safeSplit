@@ -40,3 +40,15 @@ export const PrepareTransferSchema = z
   .strip()
   .describe("Instructions for preparing a transfer transaction for user approval");
 
+/**
+ * Input schema for getting token address by symbol.
+ */
+export const GetTokenAddressSchema = z
+  .object({
+    symbol: z
+      .string()
+      .describe("The token symbol (e.g. USDC, EURC, CBBTC)"),
+  })
+  .strip()
+  .describe("Instructions for getting the contract address of a token by its symbol");
+

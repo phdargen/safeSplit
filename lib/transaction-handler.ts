@@ -9,12 +9,12 @@ import {
   ContentTypeWalletSendCalls,
   type WalletSendCallsParams,
 } from "@xmtp/content-type-wallet-send-calls";
-import type { TransactionPrepared, MultiTransactionPrepared } from "./action-providers";
+import type { TransactionPrepared, SwapTransactionPrepared, MultiTransactionPrepared } from "./action-providers";
 import { addPendingSettlementTransaction } from "./action-providers/expenseSplitter/storage";
-import { parseUnits } from "viem";
+import { parseUnits, toHex } from "viem";
 
 /**
- * Send a single transaction request to the user
+ * Send a single transaction request to the user (ERC20 transfers only)
  */
 export async function sendSingleTransaction(
   ctx: MessageContext,
@@ -68,6 +68,88 @@ export async function sendSingleTransaction(
   );
 
   console.log(`✅ Transaction request sent`);
+}
+
+/**
+ * Send a swap transaction request to the user
+ */
+export async function sendSwapTransaction(
+  ctx: MessageContext,
+  transactionPrepared: SwapTransactionPrepared,
+  senderAddress: string,
+  response: string,
+): Promise<void> {
+  const networkId = process.env.NETWORK_ID || "base-sepolia";
+  const chain = NETWORK_ID_TO_VIEM_CHAIN[networkId as keyof typeof NETWORK_ID_TO_VIEM_CHAIN];
+  
+  if (!chain) {
+    await ctx.sendText(`Error: Unsupported network ${networkId}`);
+    return;
+  }
+
+  console.log('sendSwapTransaction called with description:', transactionPrepared.description);
+
+  const chainId = `0x${chain.id.toString(16)}` as `0x${string}`;
+
+  // Validate metadata array matches calls
+  if (transactionPrepared.metadata.length !== transactionPrepared.calls.length) {
+    console.error('Metadata array mismatch:', transactionPrepared.metadata.length, 'vs', transactionPrepared.calls.length);
+    await ctx.sendText(`Error: Invalid swap transaction metadata`);
+    return;
+  }
+
+  const walletSendCalls: WalletSendCallsParams = {
+    version: "2.0",
+    from: senderAddress as `0x${string}`,
+    chainId: chainId,
+    calls: transactionPrepared.calls.map((call, index) => {
+      // Use the per-call metadata provided by the action provider
+      const callMetadata = transactionPrepared.metadata[index];
+      
+      // Build metadata for WalletSendCalls
+      const metadata: { description: string; transactionType: string } & Record<string, string> = {
+        description: callMetadata.description,
+        transactionType: callMetadata.transactionType,
+      };
+      
+      // Add optional fields if present
+      if (callMetadata.sellToken) metadata.sellToken = callMetadata.sellToken;
+      if (callMetadata.sellTokenName) metadata.sellTokenName = callMetadata.sellTokenName;
+      if (callMetadata.sellAmount) metadata.sellAmount = callMetadata.sellAmount;
+      if (callMetadata.buyToken) metadata.buyToken = callMetadata.buyToken;
+      if (callMetadata.buyTokenName) metadata.buyTokenName = callMetadata.buyTokenName;
+      if (callMetadata.buyAmount) metadata.buyAmount = callMetadata.buyAmount;
+      if (callMetadata.minBuyAmount) metadata.minBuyAmount = callMetadata.minBuyAmount;
+      if (callMetadata.slippageBps) metadata.slippageBps = callMetadata.slippageBps;
+
+      // Convert value from decimal string to hex
+      const valueHex = call.value === "0" || call.value === "0x0" 
+        ? "0x0" 
+        : toHex(BigInt(call.value));
+
+      return {
+        to: call.to as `0x${string}`,
+        data: call.data as `0x${string}`,
+        value: valueHex as `0x${string}`,
+        metadata,
+      };
+    }),
+    capabilities: {
+          paymasterService: { url: process.env.NEXT_PUBLIC_PAYMASTER_URL } as unknown as string,
+    } as const,
+  };
+
+  console.log(`💳 Sending swap transaction request to user's wallet...`);
+  
+  // Send the transaction request to user's wallet
+  await ctx.conversation.send(walletSendCalls, ContentTypeWalletSendCalls);
+  
+  // Send explanatory message
+  // await ctx.sendText(
+  //   `${response}\n\n💡 Please approve this transaction in your wallet to complete the swap.`,
+  // );
+
+  console.log(`✅ Swap transaction request sent`);
 }
 
 /**

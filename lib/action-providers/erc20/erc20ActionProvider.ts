@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { customActionProvider, EvmWalletProvider } from "@coinbase/agentkit";
-import { GetBalanceSchema, PrepareTransferSchema } from "./schemas";
+import { GetBalanceSchema, PrepareTransferSchema, GetTokenAddressSchema } from "./schemas";
 import { TransactionPrepared } from "./types";
 import { getTokenDetails } from "./utils";
+import { TOKEN_ADDRESSES_BY_SYMBOLS } from "./constants";
 import { encodeFunctionData, Hex, getAddress, erc20Abi, parseUnits } from "viem";
 import { resolveIdentifierToAddress, resolveAddressToDisplayName } from "../../identity-resolver";
 
@@ -131,6 +132,36 @@ async function prepareTransfer(
 }
 
 /**
+ * Gets the contract address for a token symbol on the current network.
+ *
+ * @param walletProvider - The wallet provider to get the network from.
+ * @param args - The input arguments for the action.
+ * @returns A message containing the token address or an error if not found.
+ */
+async function getTokenAddress(
+  walletProvider: EvmWalletProvider,
+  args: z.infer<typeof GetTokenAddressSchema>,
+): Promise<string> {
+  const network = walletProvider.getNetwork();
+  const networkId = network.networkId ?? "";
+  const networkTokens = TOKEN_ADDRESSES_BY_SYMBOLS[networkId as keyof typeof TOKEN_ADDRESSES_BY_SYMBOLS];
+  const tokenAddress = networkTokens?.[args.symbol as keyof typeof networkTokens];
+
+  if (tokenAddress) {
+    return `Token address for ${args.symbol} on ${networkId}: ${tokenAddress}`;
+  }
+
+  // Get available token symbols for the current network
+  const availableSymbols = networkTokens ? Object.keys(networkTokens) : [];
+  const availableSymbolsText =
+    availableSymbols.length > 0
+      ? ` Available token symbols on ${networkId}: ${availableSymbols.join(", ")}`
+      : ` No token symbols are configured for ${networkId}`;
+
+  return `Error: Token symbol "${args.symbol}" not found on ${networkId}.${availableSymbolsText}`;
+}
+
+/**
  * Factory function to create ERC20 action provider.
  * Returns a single action provider with all ERC20 actions.
  *
@@ -138,6 +169,19 @@ async function prepareTransfer(
  */
 export const erc20ActionProvider = () => {
   const provider = customActionProvider<EvmWalletProvider>([
+    {
+      name: "get_erc20_token_address",
+      description: `
+      This tool will get the contract address for frequently used ERC20 tokens.
+      It takes the following input:
+      - symbol: The token symbol (e.g. USDC, EURC, CBBTC)
+      
+      Important notes:
+      - Use this tool when you need to find the contract address for a known token symbol
+      `,
+      schema: GetTokenAddressSchema,
+      invoke: getTokenAddress,
+    },
     {
       name: "get_erc20_balance",
       description: `
