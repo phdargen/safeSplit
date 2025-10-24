@@ -268,11 +268,13 @@ const transactionReferenceMiddleware: AgentMiddleware = async (ctx, next) => {
       return; // Settlement was handled
     }
 
+    const blockExplorerUrl = process.env.NETWORK_ID === "base-mainnet" ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/";
+
     // Standard transaction confirmation (non-settlement)
-    await ctx.sendText(
-      `✅ Transaction confirmed!\n` +
-        `🔗 Network: ${transactionRef.networkId}\n` +
-        `📄 Hash: ${transactionRef.reference}` 
+    await ctx.conversation.send(
+      `✅ Transaction confirmed!\n\n` +
+        `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})`,
+      ContentTypeMarkdown
     );
 
     return;

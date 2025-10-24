@@ -360,7 +360,7 @@ export const zeroXActionProvider = (config?: ZeroXActionProviderConfig) => {
       Important notes:
       - The user must approve the transaction in their own wallet
       - If needed, it will prepare an approval transaction for the AllowanceHolder contract
-      - The contract address for native ETH is "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      - The contract address for native ETH is "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" 
       - Use sellToken units exactly as provided, do not convert to wei or any other units
       - Never assume token addresses, they must be provided as inputs
 

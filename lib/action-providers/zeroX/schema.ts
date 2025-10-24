@@ -15,7 +15,7 @@ export const GetSwapPriceSchema = z
       .describe("The token contract address to buy"),
     sellAmount: z
       .string()
-      .describe("The amount of sellToken to sell in whole units (e.g., 1.5 WETH, 10 USDC)"),
+      .describe("The amount of sellToken to sell in whole units (e.g., 1.5 ETH, 10 USDC)"),
     slippageBps: z
       .number()
       .int()
@@ -43,7 +43,7 @@ export const PrepareSwapSchema = z
       .describe("The token contract address to buy"),
     sellAmount: z
       .string()
-      .describe("The amount of sellToken to sell in whole units (e.g., 1.5 WETH, 10 USDC)"),
+      .describe("The amount of sellToken to sell in whole units (e.g., 1.5 ETH, 10 USDC)"),
     userAddress: z
       .string()
       .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address format")

@@ -4,6 +4,7 @@
 
 import type { MessageContext } from "@xmtp/agent-sdk";
 import type { TransactionReference } from "@xmtp/content-type-transaction-reference";
+import { ContentTypeMarkdown } from "@xmtp/content-type-markdown";
 import { updateSettlementTransaction, findAndRemovePendingTransaction } from "./action-providers/expenseSplitter/storage";
 import { resolveAddressToDisplayName } from "./identity-resolver";
 import { createPublicClient, http } from "viem";
@@ -131,12 +132,15 @@ export async function handleSettlementTransaction(
     const fromDisplayName = await resolveAddressToDisplayName(confirmedTransaction.fromAddress);
     const toDisplayName = await resolveAddressToDisplayName(confirmedTransaction.toAddress);
 
+    // Get block explorer URL
+    const blockExplorerUrl = process.env.NETWORK_ID === "base-mainnet" ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/";
+
     // Send confirmation to current conversation (could be DM)
-    await ctx.sendText(
-      `✅ Transaction confirmed!\n` +
-      `🔗 Network: ${transactionRef.networkId}\n` +
-      `📄 Hash: ${transactionRef.reference}\n` +
-      `\nThank you for settling up!`
+    await ctx.conversation.send(
+      `✅ Transaction confirmed!\n\n` +
+      `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})\n\n` +
+      `Thank you for settling up!`,
+      ContentTypeMarkdown
     );
 
     // Get the group conversation to send notification
@@ -162,7 +166,7 @@ export async function handleSettlementTransaction(
           `Tab "${updatedTab.name}" is now fully settled.\n` +
           `All ${totalCount} transaction(s) have been confirmed.\n\n` +
           `✅ Latest: ${fromDisplayName} → ${toDisplayName} (${confirmedTransaction.amount} ${confirmedTransaction.toAddress.startsWith('0x') ? 'USDC' : updatedTab.currency})\n` +
-          `📄 Hash: ${transactionRef.reference.slice(0, 10)}...${transactionRef.reference.slice(-8)}`;
+          `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})`;
       } else if (updatedTab.status === "settling") {
         // First or subsequent transaction (but not complete)
         const isFirst = confirmedCount === 1;
@@ -170,18 +174,18 @@ export async function handleSettlementTransaction(
           `💸 Settlement Progress: ${confirmedCount}/${totalCount}\n\n` +
           `${isFirst ? '🔒 Tab is now locked for settlement.\n\n' : ''}` +
           `✅ ${fromDisplayName} → ${toDisplayName} (${confirmedTransaction.amount} ${confirmedTransaction.toAddress.startsWith('0x') ? 'USDC' : updatedTab.currency})\n` +
-          `📄 Hash: ${transactionRef.reference.slice(0, 10)}...${transactionRef.reference.slice(-8)}\n\n` +
+          `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})\n\n` +
           `${totalCount - confirmedCount} transaction(s) remaining.`;
       } else {
         // Shouldn't happen, but handle gracefully
         notification = 
           `✅ Settlement transaction confirmed\n\n` +
           `${fromDisplayName} → ${toDisplayName} (${confirmedTransaction.amount} ${updatedTab.currency})\n` +
-          `📄 Hash: ${transactionRef.reference.slice(0, 10)}...${transactionRef.reference.slice(-8)}`;
+          `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})`;
       }
 
       // Send notification to the group
-      await groupConversation.send(notification);
+      await groupConversation.send(notification, ContentTypeMarkdown);
       console.log(`📨 Sent settlement notification to group ${metadata.groupId.slice(0, 8)}...`);
 
     } catch (error) {
@@ -193,9 +197,11 @@ export async function handleSettlementTransaction(
 
   } catch (error) {
     console.error("Error handling settlement transaction:", error);
-    await ctx.sendText(
-      `⚠️ Error processing transaction confirmation: ${error}\n` +
-      `Transaction hash: ${transactionRef.reference}`
+    const blockExplorerUrl = process.env.NETWORK_ID === "base-mainnet" ? "https://basescan.org/tx/" : "https://sepolia.basescan.org/tx/";
+    await ctx.conversation.send(
+      `⚠️ Error processing transaction confirmation: ${error}\n\n` +
+      `📄 [View Transaction](${blockExplorerUrl}${transactionRef.reference})`,
+      ContentTypeMarkdown
     );
     return false;
   }

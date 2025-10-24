@@ -34,6 +34,7 @@ function getDMSystemPrompt(networkId: string): string {
 IMPORTANT: You ONLY prepare transactions. Users approve them in their own wallets.
 
 Network: ${networkId}
+Native token: ETH
 USDC: ${usdcAddress || "Not available"}
 
 You have tools to check balances, prepare transfers, and view group information.
@@ -57,6 +58,7 @@ function getGroupSystemPrompt(networkId: string): string {
 IMPORTANT: You ONLY prepare transactions. Users approve them in their own wallets.
 
 Network: ${networkId}
+Native token: ETH
 USDC: ${usdcAddress || "Not available"}
 
 In groups, you can create polls, track expenses, and compute optimal settlements using USDC.
