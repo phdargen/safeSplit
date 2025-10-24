@@ -3,14 +3,27 @@
  * Provides unified access to XMTP client and group operations.
  */
 import { IdentifierKind, Agent as XMTPAgent } from "@xmtp/agent-sdk";
+import { ContentTypeMarkdown } from "@xmtp/content-type-markdown";
 import * as dotenv from "dotenv";
 
 dotenv.config();
 
 /**
- * Singleton XMTP client instance shared across action providers.
+ * Singleton XMTP agent and client instances shared across action providers.
  */
+let xmtpAgent: Awaited<ReturnType<typeof XMTPAgent.createFromEnv>> | null = null;
 let xmtpClient: Awaited<ReturnType<typeof XMTPAgent.createFromEnv>>['client'] | null = null;
+
+/**
+ * Set the shared XMTP agent instance.
+ * Should be called once at startup from the main chatbot to ensure
+ * all action providers use the same agent instance.
+ */
+export function setSharedXmtpAgent(agent: Awaited<ReturnType<typeof XMTPAgent.createFromEnv>>): void {
+  xmtpAgent = agent;
+  xmtpClient = agent.client;
+  console.log("✅ Shared XMTP agent set for action providers");
+}
 
 /**
  * Get or create the XMTP client instance.
@@ -21,17 +34,19 @@ export async function getXmtpClient(): Promise<Awaited<ReturnType<typeof XMTPAge
     return xmtpClient;
   }
 
-  try {
-    const xmtpAgent = await XMTPAgent.createFromEnv({
-      env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
-    });
+  throw new Error("XMTP agent not initialized. Call setSharedXmtpAgent() first.");
+}
 
-    xmtpClient = xmtpAgent.client;
-    return xmtpClient;
-  } catch (error) {
-    console.error("❌ Failed to create XMTP client:", error);
-    throw new Error(`Failed to initialize XMTP client: ${error}`);
+/**
+ * Get or create the XMTP agent instance.
+ * Lazy initialization - creates agent on first use.
+ */
+export async function getXmtpAgent(): Promise<Awaited<ReturnType<typeof XMTPAgent.createFromEnv>>> {
+  if (xmtpAgent) {
+    return xmtpAgent;
   }
+
+  throw new Error("XMTP agent not initialized. Call setSharedXmtpAgent() first.");
 }
 
 /**
@@ -162,6 +177,73 @@ export async function getGroupInfo(groupId: string): Promise<{
     };
   } catch (error) {
     console.error(`❌ Error fetching group info for ${groupId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Options for creating a new group.
+ */
+export interface CreateGroupOptions {
+  groupName: string;
+  description?: string;
+  imageUrl?: string;
+}
+
+/**
+ * Create a new XMTP group with specified addresses.
+ * The agent is automatically added as a member.
+ */
+export async function createGroup(
+  memberAddresses: string[],
+  options: CreateGroupOptions
+): Promise<{
+  groupId: string;
+  groupName: string;
+  memberCount: number;
+}> {
+  try {
+    const agent = await getXmtpAgent();
+    
+    // Create the group with addresses - agent is automatically added
+    const group = await agent.createGroupWithAddresses(
+      memberAddresses as `0x${string}`[],
+    );
+
+    await group.updateName(options.groupName);
+    if(options.description) await group.updateDescription(options.description);
+    if(options.imageUrl) await group.updateImageUrl(options.imageUrl);
+
+    // Sync to get latest data
+    await group.sync();
+    console.log(`✅ Created group "${group.groupName}" with ID: ${group.id}`);
+   
+    // Send welcome message
+    const groupName = group.name || options.groupName;
+    const welcomeText = `Hi **${groupName}** 👋
+
+I am **Capy**, your friendly AI companion keeping tab of your expenses!
+
+#### What I can do
+
+- **Create poll** - Make group decisions together
+- **Create tab** - Track and split shared expenses
+- **Onchain transactions** - Prepare USDC transfers for your approval
+
+---
+
+💡 Type */info* or just tag me (*@capy*) in a message to get started!`;
+
+    await group.send(welcomeText, ContentTypeMarkdown);
+    await group.sync();
+
+    return {
+      groupId: group.id,
+      groupName: group.name || options.groupName,
+      memberCount: memberAddresses.length + 1, // +1 for agent
+    };
+  } catch (error) {
+    console.error(`❌ Error creating group:`, error);
     throw error;
   }
 }

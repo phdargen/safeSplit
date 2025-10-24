@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { customActionProvider, EvmWalletProvider } from "@coinbase/agentkit";
-import { ListGroupInfoSchema } from "./schemas";
-import { getGroupInfo } from "./utils";
-import { resolveAddressToDisplayName } from "../../identity-resolver";
+import { ListGroupInfoSchema, CreateGroupSchema } from "./schemas";
+import { getGroupInfo, createGroup } from "./utils";
+import { resolveAddressToDisplayName, resolveIdentifierToAddress } from "../../identity-resolver";
 
 /**
  * List comprehensive information about an XMTP group.
@@ -44,6 +44,79 @@ async function listGroupInfo(
 }
 
 /**
+ * Create a new XMTP group with specified members.
+ * Automatically adds the agent and sender to the group.
+ */
+async function createXmtpGroup(
+  walletProvider: EvmWalletProvider,
+  args: z.infer<typeof CreateGroupSchema>
+): Promise<string> {
+  try {
+    // Resolve all member identifiers to addresses
+    const resolvedAddresses: string[] = [];
+    const failedResolutions: string[] = [];
+    
+    for (const identifier of args.memberAddresses) {
+      try {
+        const address = await resolveIdentifierToAddress(identifier);
+        resolvedAddresses.push(address);
+      } catch (error) {
+        failedResolutions.push(identifier);
+      }
+    }
+
+    // Also add the sender address
+    try {
+      const senderAddress = await resolveIdentifierToAddress(args.senderAddress);
+      if (!resolvedAddresses.includes(senderAddress)) {
+        resolvedAddresses.push(senderAddress);
+      }
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        message: `Could not resolve sender address "${args.senderAddress}": ${error}`,
+      });
+    }
+
+    // Report resolution failures if any
+    if (failedResolutions.length > 0) {
+      return JSON.stringify({
+        success: false,
+        message: `Could not resolve the following identifiers: ${failedResolutions.join(", ")}`,
+      });
+    }
+
+    // Create the group
+    const result = await createGroup(resolvedAddresses, {
+      groupName: args.groupName,
+      description: args.description,
+      imageUrl: args.imageUrl,
+    });
+
+    // Get display names for all members
+    const memberDisplayNames = await Promise.all(
+      resolvedAddresses.map(addr => resolveAddressToDisplayName(addr))
+    );
+
+    return JSON.stringify({
+      success: true,
+      data: {
+        groupId: result.groupId,
+        groupName: result.groupName,
+        memberCount: result.memberCount,
+        members: memberDisplayNames,
+      },
+      message: `Created group "${result.groupName}" with ${result.memberCount} members (including agent)`,
+    });
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      message: `Error creating group: ${error}`,
+    });
+  }
+}
+
+/**
  * Factory function to create XMTP action provider.
  * Returns a single action provider with all XMTP-related actions.
  */
@@ -68,6 +141,32 @@ export const xmtpActionProvider = () => {
       `,
       schema: ListGroupInfoSchema,
       invoke: listGroupInfo,
+    },
+    {
+      name: "create_xmtp_group",
+      description: `
+      This tool creates a new XMTP group chat with specified members.
+      
+      It takes the following inputs:
+      - groupName: The name of the group (REQUIRED)
+      - memberAddresses: Array of identifiers (Ethereum addresses, ENS names, or Basenames) for group members
+      - senderAddress: The Ethereum address of the message sender
+      - description: Optional description of the group
+      - imageUrl: Optional URL pointing to an image for the group
+      
+      The agent and sender are automatically added to the group.
+      Member identifiers can be:
+      - Ethereum addresses (e.g., "0x1234...")
+      - ENS names (e.g., "alice.eth")
+      - Basenames (names without .eth are automatically treated as Basenames - e.g., "alice" becomes "alice.base.eth")
+      
+      Use this when:
+      - Users want to create a new group chat
+      - Users want to start a conversation with multiple people
+      - Users ask to "create a group" or "make a group chat"
+      `,
+      schema: CreateGroupSchema,
+      invoke: createXmtpGroup,
     },
   ]);
 

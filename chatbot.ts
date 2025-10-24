@@ -52,6 +52,7 @@ import {
 } from "./utils/inline-actions/expense-menu";
 import { pollMiddleware } from "./utils/inline-actions/poll-middleware";
 import { sendWelcomeMessage, sendConversationWelcomeMessage } from "./lib/welcome-message";
+import { setSharedXmtpAgent } from "./lib/action-providers/xmtp/utils";
 
 // Initialize environment variables
 dotenv.config();
@@ -313,6 +314,10 @@ async function main(): Promise<void> {
     dbPath: customDbPath,
   });
   
+  // Set the shared XMTP agent for action providers
+  // This ensures group creation uses the same agent instance that listens for messages
+  setSharedXmtpAgent(xmtpAgent);
+  
   // Initialize expense menu inline actions
   initializeExpenseMenuActions();
   
@@ -336,6 +341,7 @@ async function main(): Promise<void> {
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {
     const text = ctx.message.content.trim();
+    console.log("text", text);
     
     // Handle /welcome command
     if (text === "/welcome" || text.toLowerCase() === "/welcome") {
