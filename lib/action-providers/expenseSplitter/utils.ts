@@ -248,9 +248,22 @@ export async function prepareTabSettlement(
     })
   );
 
+  // Extract all individual transfer descriptions for the user-friendly message
+  const transferDescriptions: string[] = [];
+  for (const settlement of batchedSettlements) {
+    for (const meta of settlement.metadata) {
+      transferDescriptions.push(meta.description);
+    }
+  }
+  
+  // Build formatted message
+  const transferList = transferDescriptions.map(desc => `- ${desc}`).join('\n');
+  const message = `🤝 Optimal settlement prepared with ${transferDescriptions.length} transfer(s):\n\n${transferList}`;
+
   const response: any = {
     type: "MULTI_TRANSACTION_PREPARED",
     description: `Settlement for tab "${tab.name}" - ${batchedSettlements.length} payer(s), ${settlements.length} transfer(s)`,
+    message, // Add user-friendly message
     settlements: batchedSettlements,
   };
 

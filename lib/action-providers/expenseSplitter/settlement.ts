@@ -156,7 +156,7 @@ export function prepareSettlementTransactions(
     const transactionId = settlementTransactionIds[i];
 
     // Convert amount to token units using correct decimals
-    const amountInUnits = parseUnits(settlement.amount, decimals)/ BigInt(100); // TO DO: remove this divide by 100, only for testing
+    const amountInUnits = parseUnits(settlement.amount, decimals); 
 
     // Encode the transfer function call
     const transferData = encodeFunctionData({

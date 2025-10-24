@@ -219,7 +219,7 @@ async function initiateSettlement(ctx: MessageContext, groupId: string, tabId: s
 
     // Check if it's a MultiTransactionPrepared
     if (parsed.type === "MULTI_TRANSACTION_PREPARED") {
-      await sendMultipleTransactions(ctx, parsed, "");
+      await sendMultipleTransactions(ctx, parsed, parsed.message || "");
     } else {
       await ctx.sendText("Settlement prepared successfully");
     }

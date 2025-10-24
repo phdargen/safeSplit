@@ -47,10 +47,10 @@ export const AddExpenseSchema = z
     payerAddress: z
       .string()
       .describe("Ethereum address, ENS name, or Basename of the person who paid. If no .eth suffix, automatically appends .base.eth"),
-    participantAddresses: z
-      .array(z.string())
-      .optional()
-      .describe("Optional array of identifiers (Ethereum addresses, ENS names, or Basenames) for people sharing this expense. If not provided, defaults to all tab participants. Names without .eth suffix automatically get .base.eth appended"),
+    // participantAddresses: z
+    //   .array(z.string())
+    //   .optional()
+    //   .describe("Optional array of identifiers (Ethereum addresses, ENS names, or Basenames) for people sharing this expense. If not provided, defaults to all tab participants. Names without .eth suffix automatically get .base.eth appended"), // TODO implement this
   })
   .strip()
   .describe("Instructions for adding an expense to a tab");

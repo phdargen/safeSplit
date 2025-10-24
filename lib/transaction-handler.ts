@@ -202,8 +202,8 @@ export async function sendMultipleTransactions(
 
   // Send a summary to the group
   await ctx.sendText(
-    // `${response}\n\n
-    `💡 Settlement prepared! Each person who owes money receives their transaction request per DM. Please check and approve in due time.`
+    `${response}\n\n`+
+    `💡 Each person who owes money receives their transaction request per DM. Please check and approve in due time`
   );
 
   // Track DM failures to send in group chat
@@ -270,9 +270,8 @@ export async function sendMultipleTransactions(
       for (let i = 0; i < settlement.calls.length; i++) {
         // Calculate the EXACT atomic amount that's being sent in the transaction
         // This must match the calculation in prepareSettlementTransactions:
-        // parseUnits(settlement.amount, decimals) / BigInt(100)
         const decimals = settlement.metadata[i].tokenDecimals || 6;
-        const amountInUnits = parseUnits(settlement.metadata[i].amount, decimals) / BigInt(100); // TO DO: remove this divide by 100, only for testing
+        const amountInUnits = parseUnits(settlement.metadata[i].amount, decimals); 
         const atomicAmount = amountInUnits.toString();
         
         console.log('settlement.metadata[i].amount', settlement.metadata[i].amount);

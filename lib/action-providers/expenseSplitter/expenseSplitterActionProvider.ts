@@ -111,10 +111,18 @@ async function listExpenseTabs(
       };
     });
 
+    const tabsList = tabsData.map(tab => 
+      `- ${tab.name} with ${tab.totalAmount} ${tab.currency} expenses`
+    ).join('\n');
+
+    const message = tabs.length > 0 
+      ? `Found ${tabs.length} tab(s) in this group:\n\n${tabsList}`
+      : 'No tabs found in this group';
+
     return JSON.stringify({
       success: true,
       data: { tabs: tabsData },
-      message: `Found ${tabs.length} tab(s) in this group`,
+      message,
     });
   } catch (error) {
     return JSON.stringify({
@@ -180,46 +188,7 @@ async function addExpense(
     }
 
     // Determine participants for this expense
-    let participantInboxIds: string[];
-    
-    if (args.participantAddresses && args.participantAddresses.length > 0) {
-      // Resolve participant identifiers to addresses
-      const resolvedAddresses: string[] = [];
-      for (const identifier of args.participantAddresses) {
-        try {
-          const address = await resolveIdentifierToAddress(identifier);
-          resolvedAddresses.push(address.toLowerCase());
-        } catch (error) {
-          return JSON.stringify({
-            success: false,
-            message: `Could not resolve participant identifier "${identifier}": ${error}`,
-          });
-        }
-      }
-      
-      // Validate all addresses exist in tab participants
-      const invalidAddresses = resolvedAddresses.filter(
-        addr => !tab.participants.some(p => p.address === addr)
-      );
-      
-      if (invalidAddresses.length > 0) {
-        const displayNames = await Promise.all(
-          invalidAddresses.map(addr => resolveAddressToDisplayName(addr))
-        );
-        return JSON.stringify({
-          success: false,
-          message: `The following are not participants in this tab: ${displayNames.join(", ")}`,
-        });
-      }
-      
-      // Convert addresses to inboxIds
-      participantInboxIds = tab.participants
-        .filter(p => resolvedAddresses.includes(p.address))
-        .map(p => p.inboxId);
-    } else {
-      // Default to all tab participants
-      participantInboxIds = tab.participants.map(p => p.inboxId);
-    }
+    let participantInboxIds = tab.participants.map(p => p.inboxId);
 
     if (participantInboxIds.length === 0) {
       return JSON.stringify({
@@ -262,7 +231,7 @@ async function addExpense(
         payerDisplayName,
         participantDisplayNames,
       },
-      message: `Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}" paid by ${payerDisplayName}`,
+      message: `Added expense: ${formatCurrency(amount, tab.currency)} for "${args.description}" paid by ${payerDisplayName} ✅`,
     });
   } catch (error) {
     return JSON.stringify({
@@ -345,6 +314,67 @@ async function getTabInfo(
       };
     }
 
+    // Build formatted message
+    let message = `📝 ${tab.name}\n\n`;
+    message += `Status: ${tab.status}\n`;
+    message += `Participants: ${tab.participants.length}\n`;
+    message += `Total: ${formatCurrency(totalExpenses, tab.currency)}\n\n`;
+
+    // Show expenses
+    if (expenses.length > 0) {
+      message += `💰 Expenses (${tab.currency}):\n`;
+      
+      // Group expenses by payer
+      const expensesByPayer = new Map<string, typeof expenses>();
+      for (const expense of expenses) {
+        const payer = expense.payer;
+        if (!expensesByPayer.has(payer)) {
+          expensesByPayer.set(payer, []);
+        }
+        expensesByPayer.get(payer)!.push(expense);
+      }
+
+      // Display expenses grouped by payer
+      for (const [payerDisplayName, payerExpenses] of expensesByPayer) {
+        message += `- ${payerDisplayName}:\n`;
+        for (const expense of payerExpenses) {
+          message += `  • ${formatCurrency(expense.amount, "")}for ${expense.description}\n`;
+        }
+        message += `\n`;
+      }
+
+      // Show balances
+      message += `💸 Settlement (${tab.currency}):\n`;
+      
+      // Sort balances: owed (positive) first, then settled (zero), then owes (negative)
+      const sortedBalances = balancesWithDisplayNames.sort((a, b) => {
+        const aValue = parseFloat(a.netSettlement);
+        const bValue = parseFloat(b.netSettlement);
+        return bValue - aValue; // Descending order
+      });
+
+      for (const balance of sortedBalances) {
+        const amount = parseFloat(balance.netSettlement);
+        
+        if (amount > 0) {
+          // Owed to this person
+          message += `- ${balance.displayName}:\n`;
+          message += `   +${formatCurrency(balance.netSettlement, "")}\n`;
+        } else if (amount < 0) {
+          // This person owes
+          const absAmount = (amount * -1).toString();
+          message += `- ${balance.displayName}:\n`;
+          message += `   -${formatCurrency(absAmount, "")}\n`;
+        } else {
+          // Settled
+          message += `- ${balance.displayName}:\n`;
+          message += `   ${formatCurrency("0", "")}\n`;
+        }
+      }
+    } else {
+      message += `No expenses yet`;
+    }
+
     return JSON.stringify({
       success: true,
       data: {
@@ -361,7 +391,7 @@ async function getTabInfo(
         balances: balancesWithDisplayNames,
         settlement: settlementInfo,
       },
-      message: `Tab "${tab.name}" has ${expenses.length} expense(s)`,
+      message,
     });
   } catch (error) {
     return JSON.stringify({
@@ -384,7 +414,7 @@ async function deleteExpense(
     return JSON.stringify({
       success: true,
       data: { expenseId: args.expenseId },
-      message: `Deleted expense ${args.expenseId}`,
+      message: `Expense deleted ✅`,
     });
   } catch (error) {
     return JSON.stringify({
@@ -402,6 +432,7 @@ async function settleExpenses(
   args: z.infer<typeof SettleExpensesSchema>
 ): Promise<string> {
   try {
+    // prepareTabSettlement now includes the formatted message
     return await prepareTabSettlement(args.groupId, args.tabId, args.tokenAddress);
   } catch (error) {
     return JSON.stringify({
@@ -420,16 +451,14 @@ export const expenseSplitterActionProvider = () => {
     {
       name: "create_expense_tab",
       description: `
-      This tool creates a new expense tab in an XMTP group.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID where this tab will be created
-      - tabName: A human-readable name for the tab (e.g., "Weekend Trip", "Monthly Dinners")
-      
-      The tab includes all current group members as participants by default.
-      Currency is always USDC.
-      
+      This tool creates a new expense tab for a group.
       Use this when users want to start tracking expenses for a specific event or period.
+            
+      The tab includes all current group members as participants by default.
+      Currency is always USDC.     
+      
+      Output message to user:
+      - Simply report the 'message' field from the JSON response as is
       `,
       schema: CreateTabSchema,
       invoke: createExpenseTab,
@@ -438,11 +467,10 @@ export const expenseSplitterActionProvider = () => {
       name: "list_expense_tabs",
       description: `
       This tool lists all expense tabs in an XMTP group.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID to list tabs for
-      
       Use this when users want to see all available tabs in their group.
+
+      Output message to user:
+      - Simply report the 'message' field from the JSON response as is
       `,
       schema: ListTabsSchema,
       invoke: listExpenseTabs,
@@ -451,21 +479,12 @@ export const expenseSplitterActionProvider = () => {
       name: "add_expense",
       description: `
       This tool adds an expense to an expense tab.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - tabId: The tab ID to add the expense to
-      - amount: The amount of the expense as a string (e.g., "10.5", "100")
-      - description: What the expense was for (e.g., "beer", "dinner", "hotel")
-      - payerAddress: Ethereum address of the person who paid for this expense (can be any tab participant)
-      - participantAddresses: Optional array of Ethereum addresses for people sharing this expense
+      Use this when users report an expense.
       
       The payer can be anyone in the tab, not just the message sender.
       This allows scenarios like "Alice says: Bob paid for dinner" where Alice is the sender but Bob is the payer.
       If participantAddresses is not provided, the expense is split equally among all tab participants.
       If participantAddresses is provided, the expense is split only among those specific people.
-      
-      Use this when users report an expense (whether they paid or someone else paid).
       `,
       schema: AddExpenseSchema,
       invoke: addExpense,
@@ -474,21 +493,10 @@ export const expenseSplitterActionProvider = () => {
       name: "get_tab_info",
       description: `
       This tool gets comprehensive information about a tab including all expenses and current balances.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - tabId: The tab ID to get information for
-      
-      Returns:
-      - Tab details (name, currency, creation date)
-      - List of all expenses with amounts, descriptions, payers, and participants
-      - Total expenses amount
-      - Detailed balances for each participant showing:
-        * Total amount they paid out
-        * Net settlement amount (positive = they should receive, negative = they should pay)
-        * Status (owes/owed/settled)
-      
       Use this when users want to see expenses, check balances, or get a complete overview of a tab.
+
+      Output message to user:
+      - Simply report the 'message' field from the JSON response as is
       `,
       schema: GetTabInfoSchema,
       invoke: getTabInfo,
@@ -497,13 +505,10 @@ export const expenseSplitterActionProvider = () => {
       name: "delete_expense",
       description: `
       This tool deletes an expense from a tab.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - tabId: The tab ID containing the expense
-      - expenseId: The ID of the expense to delete
-      
       Use this when users want to correct a mistake by removing an expense.
+
+      Output message to user:
+      - Simply report the 'message' field from the JSON response as is
       `,
       schema: DeleteExpenseSchema,
       invoke: deleteExpense,
@@ -512,19 +517,16 @@ export const expenseSplitterActionProvider = () => {
       name: "settle_expenses",
       description: `
       This tool computes optimal settlements and prepares USDC transfer transactions.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - tabId: The tab ID to settle
-      - tokenAddress: Optional token contract address (defaults to USDC for current network)
-      
+      Use this when users are ready to settle up and transfer funds.
+
       This action:
       1. Calculates net balances for all participants
       2. Computes the minimum number of transfers needed to settle
       3. Prepares USDC transfer transactions for each payer
-      4. Returns transaction data that the chatbot will use to send to each payer
+      4. Returns transaction data that will be send to each payer to approve in their own wallet  
       
-      Use this when users are ready to settle up and transfer funds.
+      Output message to user:
+      - Simply report the 'message' field from the JSON response as is
       `,
       schema: SettleExpensesSchema,
       invoke: settleExpenses,
