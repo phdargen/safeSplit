@@ -13,25 +13,26 @@ import {
   calculateTotalExpenses,
   calculateDetailedBalances,
 } from "../../lib/action-providers/expenseSplitter/tab";
-import { getGroupInfo, getGroupMembers } from "../../lib/action-providers/xmtp/utils";
+import { getGroupInfo, getGroupMembers, getXmtpAgent } from "../../lib/action-providers/xmtp/utils";
 import { resolveAddressToDisplayName } from "../../lib/identity-resolver";
-import { formatCurrency } from "../../lib/action-providers/expenseSplitter/utils";
-import { generateId } from "../../lib/action-providers/expenseSplitter/utils";
+import { formatCurrency, generateId } from "../../lib/action-providers/expenseSplitter/utils";
+import { prepareTabSettlement } from "../../lib/action-providers/expenseSplitter/utils";
+import { sendMultipleTransactions } from "../../lib/transaction-handler";
 
 // Predefined tab name templates
 const TAB_TEMPLATES = [
-  { id: "weekend-trip", name: "Weekend Trip" },
-  { id: "dinner", name: "Dinner" },
-  { id: "monthly-expenses", name: "Monthly Expenses" },
   { id: "trip", name: "Trip" },
-  { id: "other-event", name: "Other Event" },
+  { id: "dinner", name: "Dinner" },
+  { id: "party", name: "Party" },
+  { id: "gift", name: "Gift" },
 ];
 
 /**
  * Show the main info menu with primary actions.
  */
 export async function showMainMenu(ctx: MessageContext): Promise<void> {
-  await ActionBuilder.create("info-main-menu", "What would you like to do?")
+  await ActionBuilder.create("info-main-menu", "What can Capy do for you?")
+    .add("create-poll", "🗳️ Create Poll")
     .add("view-tabs", "📋 View Tabs")
     .add("create-tab", "➕ Create Tab")
     .add("group-info", "👥 Group Info")
@@ -47,7 +48,7 @@ async function showTabsList(ctx: MessageContext, groupId: string): Promise<void>
     const tabs = await listTabs(groupId);
 
     if (tabs.length === 0) {
-      await ActionBuilder.create("no-tabs", "No tabs yet! Create your first tab:")
+      await ActionBuilder.create("no-tabs", "No tabs yet!")
         .add("create-tab", "➕ Create Tab")
         .send(ctx);
       return;
@@ -100,77 +101,93 @@ async function showTabDetails(ctx: MessageContext, groupId: string, tabId: strin
     const totalExpenses = calculateTotalExpenses(tab.expenses);
 
     // Build message
-    let message = `📊 ${tab.name}\n\n`;
+    let message = `📝 ${tab.name}\n\n`;
     message += `Status: ${tab.status}\n`;
-    message += `Currency: ${tab.currency}\n`;
     message += `Participants: ${tab.participants.length}\n`;
-    message += `Total Expenses: ${formatCurrency(totalExpenses, tab.currency)}\n\n`;
+    message += `Total: ${formatCurrency(totalExpenses, tab.currency)}\n\n`;
 
     // Show expenses
     if (tab.expenses.length > 0) {
-      message += `📋 Expenses (${tab.expenses.length}):\n\n`;
+      message += `💰 Expenses (${tab.currency}):\n`;
       
-      for (const expense of tab.expenses.slice(-5)) { // Show last 5 expenses
-        const payerDisplayName = await resolveAddressToDisplayName(expense.payerAddress);
-        const date = new Date(expense.timestamp).toLocaleDateString();
-        message += `• ${formatCurrency(expense.amount, expense.currency)} - ${expense.description}\n`;
-        message += `  Paid by: ${payerDisplayName}\n`;
-        message += `  Date: ${date}\n\n`;
+      // Group expenses by payer
+      const expensesByPayer = new Map<string, typeof tab.expenses>();
+      for (const expense of tab.expenses) { 
+        const payer = expense.payerAddress;
+        if (!expensesByPayer.has(payer)) {
+          expensesByPayer.set(payer, []);
+        }
+        expensesByPayer.get(payer)!.push(expense);
       }
 
-      if (tab.expenses.length > 5) {
-        message += `... and ${tab.expenses.length - 5} more\n\n`;
+      // Display expenses grouped by payer
+      for (const [payerAddress, expenses] of expensesByPayer) {
+        const payerDisplayName = await resolveAddressToDisplayName(payerAddress);
+        message += `- ${payerDisplayName}:\n`;
+        for (const expense of expenses) {
+          message += `  • ${formatCurrency(expense.amount,"")}for ${expense.description}\n`;
+        }
+        message += `\n`;
       }
 
       // Calculate and show balances
       const balances = calculateDetailedBalances(tab.expenses, tab.participants);
       
-      message += `💳 Balances:\n\n`;
+      message += `💸 Settlement (${tab.currency}):\n`;
       
-      const owed = balances.filter(b => b.status === "owed");
-      const owes = balances.filter(b => b.status === "owes");
-      const settled = balances.filter(b => b.status === "settled");
+      // Sort balances: owed (positive) first, then settled (zero), then owes (negative)
+      const sortedBalances = balances.sort((a, b) => {
+        const aValue = parseFloat(a.netSettlement);
+        const bValue = parseFloat(b.netSettlement);
+        return bValue - aValue; // Descending order
+      });
 
-      if (owed.length > 0) {
-        message += `✅ Owed to:\n`;
-        for (const balance of owed) {
-          const displayName = await resolveAddressToDisplayName(balance.address);
-          message += `  • ${displayName}: +${formatCurrency(balance.netSettlement, tab.currency)}\n`;
-        }
-        message += `\n`;
-      }
-
-      if (owes.length > 0) {
-        message += `💸 Owes:\n`;
-        for (const balance of owes) {
-          const displayName = await resolveAddressToDisplayName(balance.address);
-          const absAmount = (parseFloat(balance.netSettlement) * -1).toString();
-          message += `  • ${displayName}: ${formatCurrency(absAmount, tab.currency)}\n`;
-        }
-        message += `\n`;
-      }
-
-      if (settled.length > 0) {
-        message += `⚖️  Settled:\n`;
-        for (const balance of settled) {
-          const displayName = await resolveAddressToDisplayName(balance.address);
-          message += `  • ${displayName}: ${formatCurrency("0", tab.currency)}\n`;
+      for (const balance of sortedBalances) {
+        const displayName = await resolveAddressToDisplayName(balance.address);
+        const amount = parseFloat(balance.netSettlement);
+        
+        if (amount > 0) {
+          // Owed to this person
+          message += `- ${displayName}:\n`;
+          message += `   +${formatCurrency(balance.netSettlement,"")}\n`;
+        } else if (amount < 0) {
+          // This person owes
+          const absAmount = (amount * -1).toString();
+          message += `- ${displayName}:\n`;
+          message += `   -${formatCurrency(absAmount,"")}\n`;
+        } else {
+          // Settled
+          message += `- ${displayName}:\n`;
+          message += `   ${formatCurrency("0","")}\n`;
         }
       }
+      message += `\n`;
     } else {
-      message += `No expenses recorded yet.`;
+      message += `No expenses yet`;
     }
 
-    // Register navigation actions
-    const settleActionId = `settle-tab-${tabId}`;
-    registerAction(settleActionId, async (ctx) => {
-      await initiateSettlement(ctx, groupId, tabId);
-    });
+    // Build action builder
+    const builder = ActionBuilder.create(`tab-details-${tabId}`, message);
 
-    // Show details with settle button only
-    await ActionBuilder.create(`tab-details-${tabId}`, message)
-      .add(settleActionId, "💰 Settle Tab")
-      .send(ctx);
+    // Only show settle button if there are expenses
+    if (tab.expenses.length > 0) {
+      const settleActionId = `settle-tab-${tabId}`;
+      registerAction(settleActionId, async (ctx) => {
+        await initiateSettlement(ctx, groupId, tabId);
+      });
+      builder.add(settleActionId, "🤝 Settle Tab");
+    }
+
+    // Add expense button (always shown)
+    const addExpenseActionId = `add-expense-${tabId}`;
+    registerAction(addExpenseActionId, async (ctx) => {
+      await ctx.sendText(
+        'To add an expense simply tag me (@capy) in a message like "I paid 100 USD for dinner".'
+      );
+    });
+    builder.add(addExpenseActionId, "➕ Add Expense");
+
+    await builder.send(ctx);
   } catch (error) {
     console.error("Error showing tab details:", error);
     await ctx.sendText(`Error loading tab details: ${error instanceof Error ? error.message : String(error)}`);
@@ -178,28 +195,34 @@ async function showTabDetails(ctx: MessageContext, groupId: string, tabId: strin
 }
 
 /**
- * Initiate settlement for a tab.
- * Note: This will trigger the LangChain agent's settle_expenses tool via a message.
+ * Initiate settlement for a tab by calling the shared settlement utility.
  */
 async function initiateSettlement(ctx: MessageContext, groupId: string, tabId: string): Promise<void> {
   try {
-    const tab = await getTab(groupId, tabId);
-    if (!tab) {
-      await ctx.sendText("Tab not found");
+    // Use the shared settlement preparation utility
+    const result = await prepareTabSettlement(groupId, tabId);
+
+    // Check if result is an error message or success message (not JSON)
+    if (!result.startsWith('{')) {
+      await ctx.sendText(result);
       return;
     }
 
-    if (tab.expenses.length === 0) {
-      await ctx.sendText(`No expenses in tab "${tab.name}". Nothing to settle!`);
-      return;
-    }
-
-    // Send a message that will trigger the agent to settle
-    await ctx.sendText(`Settling tab "${tab.name}"... Please wait.`);
+    // Parse the result to check if it's a MultiTransactionPrepared or an error
+    const parsed = JSON.parse(result);
     
-    // This will be processed by the regular agent handler which will call settle_expenses
-    // We send it as a system-like message that the agent will understand
-    await ctx.sendText(`settle expenses for tab ${tabId} in group ${groupId}`);
+    // Check for error response
+    if (parsed.success === false) {
+      await ctx.sendText(parsed.message);
+      return;
+    }
+
+    // Check if it's a MultiTransactionPrepared
+    if (parsed.type === "MULTI_TRANSACTION_PREPARED") {
+      await sendMultipleTransactions(ctx, parsed, "");
+    } else {
+      await ctx.sendText("Settlement prepared successfully");
+    }
     
   } catch (error) {
     console.error("Error initiating settlement:", error);
@@ -211,7 +234,7 @@ async function initiateSettlement(ctx: MessageContext, groupId: string, tabId: s
  * Show tab creation menu with predefined template names.
  */
 async function showCreateTabMenu(ctx: MessageContext, groupId: string): Promise<void> {
-  const builder = ActionBuilder.create("create-tab-menu", "Choose a tab name:");
+  const builder = ActionBuilder.create("create-tab-menu", "Choose a tab name. For a custom name, simply tag me (@capy) in a message like \"create tab for my weekend trip\"");
 
   // Register and add actions for each template
   for (const template of TAB_TEMPLATES) {
@@ -233,10 +256,17 @@ async function showCreateTabMenu(ctx: MessageContext, groupId: string): Promise<
 async function createTabWithName(ctx: MessageContext, groupId: string, tabName: string): Promise<void> {
   try {
     const tabId = generateId();
-    const participants = await getGroupMembers(groupId);
+    const allMembers = await getGroupMembers(groupId);
+    
+    // Exclude the agent from default participants
+    const agent = await getXmtpAgent();
+    const agentAddress = agent.address?.toLowerCase();
+    const participants = agentAddress 
+      ? allMembers.filter(member => member.address !== agentAddress)
+      : allMembers;
 
     if (participants.length === 0) {
-      await ctx.sendText(`No members found in group. Cannot create tab.`);
+      await ctx.sendText(`No members found in group (excluding agent). Cannot create tab.`);
       return;
     }
 
@@ -244,7 +274,7 @@ async function createTabWithName(ctx: MessageContext, groupId: string, tabName: 
 
     const message = 
       `✅ Created tab "${tab.name}" with ${participants.length} participants!\n\n` +
-      `You can now add expenses to this tab by talking to me.`;
+      `You can now add expenses to this tab by tagging me in a message (@capy) like "I paid 100 USD for dinner".`;
 
     // Show success message
     await ctx.sendText(message);
@@ -261,24 +291,17 @@ async function showGroupInfoDetails(ctx: MessageContext, groupId: string): Promi
   try {
     const { metadata, members } = await getGroupInfo(groupId);
 
-    const createdDate = new Date(metadata.createdAt).toLocaleString();
-
-    let output = `📋 Group Information\n\n`;
-    output += `📛 Name: ${metadata.name}\n`;
-    output += `📅 Created: ${createdDate}\n`;
-    output += `👥 Members: ${metadata.memberCount}\n`;
-
+    let output = `🥳 ${metadata.name}\n`;
     if (metadata.description) {
-      output += `📝 Description: ${metadata.description}\n`;
+      output += `📝 ${metadata.description}\n\n`;
     }
 
-    output += `\n👥 Group Members:\n\n`;
-
+    output += `\n👥 ${metadata.memberCount} Members:\n`;
     // Resolve display names for all members
     for (let i = 0; i < members.length; i++) {
       const member = members[i];
       const displayName = await resolveAddressToDisplayName(member.address);
-      output += `${i + 1}. ${displayName}\n`;
+      output += `${displayName}\n`;
     }
 
     // Show info
@@ -295,6 +318,12 @@ async function showGroupInfoDetails(ctx: MessageContext, groupId: string): Promi
  */
 export function initializeExpenseMenuActions(): void {
   // Main menu actions
+  registerAction("create-poll", async (ctx) => {
+    await ctx.sendText(
+      'To create a poll simply tag me (@capy) in a message like "create poll for weekend destination with options beach mountains city"'
+    );
+  });
+
   registerAction("view-tabs", async (ctx) => {
     const groupId = ctx.conversation.id;
     await showTabsList(ctx, groupId);

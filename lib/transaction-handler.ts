@@ -186,7 +186,6 @@ export async function sendMultipleTransactions(
   try {
     if (addressesToCheck.length > 0) {
       canMessageMap = await ctx.client.canMessage(addressesToCheck);
-      console.log(`✅ Checked DM availability for ${addressesToCheck.length} address(es)`);
     } else {
       console.log(`⚠️ No valid addresses to check for DM availability`);
       canMessageMap = new Map();
@@ -204,7 +203,7 @@ export async function sendMultipleTransactions(
   // Send a summary to the group
   await ctx.sendText(
     // `${response}\n\n
-    `💡 Settlement prepared! Each person who owes money will receive their transaction to approve.`
+    `💡 Settlement prepared! Each person who owes money receives their transaction request per DM. Please check and approve in due time.`
   );
 
   // Track DM failures to send in group chat

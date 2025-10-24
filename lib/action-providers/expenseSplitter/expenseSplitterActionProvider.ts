@@ -8,8 +8,8 @@ import {
   DeleteExpenseSchema,
   SettleExpensesSchema,
 } from "./schemas";
-import { MultiTransactionPrepared, Expense, SettlementTransaction, SettlementRecord } from "./types";
-import { generateId, getUSDCDetails, parseAmount, formatCurrency, addAmounts } from "./utils";
+import { Expense } from "./types";
+import { generateId, parseAmount, formatCurrency } from "./utils";
 import {
   createTab,
   getTab,
@@ -22,13 +22,9 @@ import {
   calculateTotalExpenses,
   calculateDetailedBalances,
 } from "./tab";
-import {
-  computeNetBalances,
-  optimizeSettlements,
-  prepareSettlementTransactions,
-} from "./settlement";
-import { getGroupMembers } from "../xmtp/utils";
+import { getGroupMembers, getXmtpAgent } from "../xmtp/utils";
 import { resolveIdentifierToAddress, resolveAddressToDisplayName } from "../../identity-resolver";
+import { prepareTabSettlement } from "./utils";
 
 /**
  * Create a new expense tab in a group.
@@ -41,12 +37,19 @@ async function createExpenseTab(
     const tabId = generateId();
     
     // Fetch all group members automatically
-    const participants = await getGroupMembers(args.groupId);
+    const allMembers = await getGroupMembers(args.groupId);
+    
+    // Exclude the agent from default participants
+    const agent = await getXmtpAgent();
+    const agentAddress = agent.address?.toLowerCase();
+    const participants = agentAddress 
+      ? allMembers.filter(member => member.address !== agentAddress)
+      : allMembers;
     
     if (participants.length === 0) {
       return JSON.stringify({
         success: false,
-        message: `No members found in group ${args.groupId}`,
+        message: `No members found in group ${args.groupId} (excluding agent)`,
       });
     }
 
@@ -399,140 +402,7 @@ async function settleExpenses(
   args: z.infer<typeof SettleExpensesSchema>
 ): Promise<string> {
   try {
-    const tab = await getTab(args.groupId, args.tabId);
-    if (!tab) {
-      return `Error: Tab ${args.tabId} not found in group ${args.groupId}`;
-    }
-
-    // Check tab status
-    if (tab.status === "settling") {
-      return JSON.stringify({
-        success: false,
-        message: `Tab "${tab.name}" is already settling. Cannot propose a new settlement.`,
-      });
-    }
-
-    if (tab.status === "settled") {
-      return JSON.stringify({
-        success: false,
-        message: `Tab "${tab.name}" is already settled. Please create a new tab for new expenses.`,
-      });
-    }
-
-    if (tab.expenses.length === 0) {
-      return `No expenses in tab "${tab.name}". Nothing to settle!`;
-    }
-
-    // Get token address (default to USDC for the network)
-    const networkId = process.env.NETWORK_ID || "base-sepolia";
-    const tokenDetails = args.tokenAddress
-      ? { address: args.tokenAddress as `0x${string}`, decimals: 6 }
-      : getUSDCDetails(networkId);
-
-    // Compute balances (pass participants to ensure all addresses are resolved)
-    const balances = computeNetBalances(tab.expenses, tab.participants);
-
-    // Check if everyone is settled
-    const hasImbalance = balances.some(b => Math.abs(parseFloat(b.netAmount)) > 0.01);
-    if (!hasImbalance) {
-      return `✅ All settled! Everyone has paid their fair share.`;
-    }
-
-    // Optimize settlements
-    const settlements = optimizeSettlements(balances, tab.currency);
-
-    if (settlements.length === 0) {
-      return `✅ All settled! Everyone has paid their fair share.`;
-    }
-
-    // Generate settlement ID and transaction IDs
-    const settlementId = generateId();
-    const settlementTransactionIds = settlements.map(() => generateId());
-
-    // Create settlement transactions for tracking
-    const settlementTransactions: SettlementTransaction[] = settlements.map((settlement, index) => ({
-      id: settlementTransactionIds[index],
-      fromInboxId: settlement.fromInboxId,
-      fromAddress: settlement.fromAddress,
-      toAddress: settlement.toAddress,
-      amount: settlement.amount,
-      status: "pending" as const,
-    }));
-
-    // Create settlement record
-    const settlementRecord: SettlementRecord = {
-      id: settlementId,
-      createdAt: Date.now(),
-      status: "proposed",
-      transactions: settlementTransactions,
-    };
-
-    // Update tab with settlement record and status
-    tab.currentSettlement = settlementRecord;
-    tab.status = "settlement_proposed";
-    await updateTab(args.groupId, args.tabId, tab);
-
-    // Prepare transactions with metadata
-    const transactions = prepareSettlementTransactions(
-      settlements,
-      tokenDetails.address,
-      tokenDetails.decimals,
-      args.groupId,
-      args.tabId,
-      settlementId,
-      settlementTransactionIds
-    );
-
-    // Group transactions by sender (fromInboxId) to batch calls
-    const settlementsByPayer = new Map<string, typeof transactions>();
-    for (const tx of transactions) {
-      const existing = settlementsByPayer.get(tx.settlement.fromInboxId);
-      if (existing) {
-        existing.push(tx);
-      } else {
-        settlementsByPayer.set(tx.settlement.fromInboxId, [tx]);
-      }
-    }
-
-    // Build the multi-transaction response with batched calls per payer (with display names)
-    const batchedSettlements = await Promise.all(
-      Array.from(settlementsByPayer.values()).map(async txs => {
-        const firstTx = txs[0];
-        const totalAmount = txs.reduce((sum, tx) => sum + parseFloat(tx.settlement.amount), 0);
-        
-        // Resolve display names for payer
-        const payerDisplayName = await resolveAddressToDisplayName(firstTx.settlement.fromAddress);
-        
-        // Build descriptions with display names
-        const descriptionsWithNames = await Promise.all(txs.map(async tx => {
-          const toDisplayName = await resolveAddressToDisplayName(tx.settlement.toAddress);
-          return `${payerDisplayName} → ${toDisplayName} (${formatCurrency(tx.settlement.amount, tx.settlement.currency)})`;
-        }));
-        
-        return {
-          fromInboxId: firstTx.settlement.fromInboxId,
-          fromAddress: firstTx.settlement.fromAddress,
-          currency: firstTx.settlement.currency,
-          description: txs.length === 1
-            ? descriptionsWithNames[0]
-            : `${payerDisplayName}: ${txs.length} payments totaling ${formatCurrency(totalAmount.toString(), firstTx.settlement.currency)}`,
-          calls: txs.map(tx => tx.call),
-          metadata: await Promise.all(txs.map(async (tx, idx) => ({
-            ...tx.metadata,
-            description: descriptionsWithNames[idx], // Use display name description
-          }))),
-        };
-      })
-    );
-
-    const response: MultiTransactionPrepared = {
-      type: "MULTI_TRANSACTION_PREPARED",
-      description: `Settlement for tab "${tab.name}" - ${batchedSettlements.length} payer(s), ${settlements.length} transfer(s)`,
-      settlements: batchedSettlements,
-    };
-
-    // Return JSON that will be detected by the chatbot
-    return JSON.stringify(response);
+    return await prepareTabSettlement(args.groupId, args.tabId, args.tokenAddress);
   } catch (error) {
     return JSON.stringify({
       success: false,
