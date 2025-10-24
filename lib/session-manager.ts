@@ -33,8 +33,14 @@ export interface ConversationSession {
  * Ensure local storage directory exists.
  */
 export function ensureLocalStorage(): void {
+  const POLLS_DIR = `${process.env.RAILWAY_VOLUME_MOUNT_PATH ?? '.'}/.data/polls`;
+  
   if (!fs.existsSync(STORAGE_DIR)) {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  }
+  
+  if (!fs.existsSync(POLLS_DIR)) {
+    fs.mkdirSync(POLLS_DIR, { recursive: true });
   }
 }
 

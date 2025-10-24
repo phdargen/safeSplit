@@ -14,7 +14,11 @@ import {
   ReactionCodec,
   type Reaction,
 } from "@xmtp/content-type-reaction";
-import type { TransactionPrepared, MultiTransactionPrepared } from "./lib/action-providers";
+import {
+  ContentTypeMarkdown,
+  MarkdownCodec,
+} from "@xmtp/content-type-markdown";
+import type { TransactionPrepared, MultiTransactionPrepared, PollPrepared } from "./lib/action-providers";
 import { 
   initializeAgent, 
   buildConversationContext, 
@@ -35,13 +39,15 @@ import { USDC_ADDRESSES } from "./lib/constants";
 import { MemorySaver } from "@langchain/langgraph";
 import { dumpMemory } from "./lib/utils";
 import { handleSettlementTransaction } from "./lib/settlement-tracker";
-import { ActionsCodec } from "./utils/inline-actions/types/ActionsContent";
+import { ActionsCodec, ContentTypeActions, type ActionsContent } from "./utils/inline-actions/types/ActionsContent";
 import { IntentCodec } from "./utils/inline-actions/types/IntentContent";
 import { inlineActionsMiddleware } from "./utils/inline-actions/inline-actions";
 import { 
   showMainMenu, 
   initializeExpenseMenuActions 
 } from "./utils/inline-actions/expense-menu";
+import { pollMiddleware } from "./utils/inline-actions/poll-middleware";
+
 // Initialize environment variables
 dotenv.config();
 
@@ -55,7 +61,7 @@ let groupMemory: MemorySaver;
 const activeThreadsCache = new Set<string>();
 
 /**
- * Process a message and detect if it contains a prepared transaction.
+ * Process a message and detect if it contains a prepared transaction or poll.
  */
 async function processMessage(
   agent: Agent,
@@ -65,10 +71,12 @@ async function processMessage(
   response: string;
   transactionPrepared?: TransactionPrepared;
   multiTransactionPrepared?: MultiTransactionPrepared;
+  pollPrepared?: PollPrepared;
 }> {
   let response = "";
   let transactionPrepared: TransactionPrepared | undefined;
   let multiTransactionPrepared: MultiTransactionPrepared | undefined;
+  let pollPrepared: PollPrepared | undefined;
 
   try {
     const stream = await agent.stream({ messages }, config);
@@ -90,9 +98,12 @@ async function processMessage(
               } else if (parsed.type === "MULTI_TRANSACTION_PREPARED") {
                 console.log("🔧 Multi-transaction prepared by tool:", parsed.description);
                 multiTransactionPrepared = parsed;
+              } else if (parsed.type === "POLL_PREPARED") {
+                console.log("🔧 Poll prepared by tool:", parsed.poll.question);
+                pollPrepared = parsed;
               }
             } catch {
-              // Not JSON or not a transaction preparation
+              // Not JSON or not a transaction/poll preparation
             }
           }
         }
@@ -104,6 +115,7 @@ async function processMessage(
       response: response.trim(),
       transactionPrepared,
       multiTransactionPrepared,
+      pollPrepared,
     };
   } catch (error) {
     console.error("Error processing message:", error);
@@ -180,6 +192,34 @@ async function handleMessage(ctx: MessageContext) {
     //   console.warn("Failed to dump MemorySaver:", e);
     // }
 
+    // Handle poll preparation
+    if (result.pollPrepared) {
+      const poll = result.pollPrepared.poll;
+      
+      // Build action buttons for voting
+      const actions = poll.options.map((opt, i) => ({
+        id: String(i),
+        label: opt,
+      }));
+      
+      // Add "Show Results" button separated from voting options
+      actions.push({
+        id: "show-results",
+        label: "📊 Show Results",
+      });
+      
+      const deadline = new Date(poll.deadline).toLocaleString();
+      const payload: ActionsContent = {
+        id: poll.id,
+        description: `🗳️ ${poll.question}\n⏰ ${deadline}\n\n`,
+        actions,
+      };
+      
+      await ctx.conversation.send(payload, ContentTypeActions);
+      console.log(`✅ Poll created: ${poll.question}`);
+      return;
+    }
+    
     // Handle transaction responses
     if (result.multiTransactionPrepared) {
       await sendMultipleTransactions(ctx, result.multiTransactionPrepared, result.response);
@@ -255,7 +295,7 @@ async function main(): Promise<void> {
    
   const xmtpAgent = await XMTPAgent.createFromEnv({
     env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
-    codecs: [new WalletSendCallsCodec(), new TransactionReferenceCodec(), new ReactionCodec(), new ActionsCodec(), new IntentCodec()],
+    codecs: [new WalletSendCallsCodec(), new TransactionReferenceCodec(), new ReactionCodec(), new ActionsCodec(), new IntentCodec(), new MarkdownCodec()],
     dbPath: customDbPath,
   });
   
@@ -265,6 +305,7 @@ async function main(): Promise<void> {
   // Apply middlewares
   xmtpAgent.use(transactionReferenceMiddleware);
   xmtpAgent.use(inlineActionsMiddleware);
+  xmtpAgent.use(pollMiddleware);
 
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {

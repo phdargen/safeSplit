@@ -9,7 +9,7 @@ import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { ChatOpenAI } from "@langchain/openai";
 import { privateKeyToAccount } from "viem/accounts";
 import { ReadOnlyEvmWalletProvider } from "./wallet-providers";
-import { erc20ActionProvider, expenseSplitterActionProvider, xmtpActionProvider } from "./action-providers";
+import { erc20ActionProvider, expenseSplitterActionProvider, pollActionProvider, xmtpActionProvider } from "./action-providers";
 import { USDC_ADDRESSES } from "./constants";
 import { SystemMessage } from "@langchain/core/messages";
 
@@ -47,20 +47,20 @@ Be clear and concise. Users control their funds.`;
 }
 
 /**
- * Get system prompt for group conversations (ERC20 + expense splitting)
+ * Get system prompt for group conversations (ERC20 + expense splitting + polls)
  */
 function getGroupSystemPrompt(networkId: string): string {
   const usdcAddress = USDC_ADDRESSES[networkId];
   
-  return `You are SplitSafe, a DeFi assistant that prepares ERC20 transactions and helps groups track shared expenses.
+  return `You are SplitSafe, a DeFi assistant that prepares ERC20 transactions and helps groups track shared expenses and create polls.
 
 IMPORTANT: You ONLY prepare transactions. Users approve them in their own wallets.
 
 Network: ${networkId}
 USDC: ${usdcAddress || "Not available"}
 
-In groups, you can track expenses and compute optimal settlements using USDC.
-Use available tools to check balances, prepare transfers, view group info, and manage expenses.
+In groups, you can create polls, track expenses, and compute optimal settlements using USDC.
+Use available tools to check balances, prepare transfers, view group info, manage expenses, and create polls for group decisions.
 
 EXPENSE RECORDING RULES:
 - When adding expenses, the payerAddress can be an Ethereum address, ENS name, or Basename
@@ -141,6 +141,7 @@ export async function initializeAgent(conversationType: ConversationType): Promi
       ? [
           ...erc20ActionProvider(), 
           ...expenseSplitterActionProvider(),
+          ...pollActionProvider(),
           ...xmtpActionProvider(),
           pythActionProvider()
         ]

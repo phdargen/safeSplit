@@ -19,8 +19,8 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
-// In-memory cache with 5 minute TTL
-const CACHE_TTL_MS = 5 * 60 * 1000;
+// In-memory cache with 12 hour TTL
+const CACHE_TTL_MS = 12 *60 * 60 * 1000;
 const identifierToAddressCache = new Map<string, CacheEntry<string>>();
 const addressToDisplayNameCache = new Map<string, CacheEntry<UserIdentity>>();
 
@@ -149,7 +149,6 @@ export async function resolveIdentifierToAddress(identifier: string): Promise<st
   // Check cache first
   const cached = identifierToAddressCache.get(normalizedInput.toLowerCase());
   if (isCacheValid(cached)) {
-    console.log('cached', cached!.value);
     return cached!.value;
   }
 

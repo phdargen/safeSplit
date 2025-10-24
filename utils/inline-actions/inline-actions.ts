@@ -63,16 +63,17 @@ export const inlineActionsMiddleware: AgentMiddleware = async (ctx, next) => {
     if (handler) {
       try {
         await handler(ctx);
+        return;
       } catch (error) {
         console.error(`❌ Error in action handler:`, error);
         await ctx.sendText(
           `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
         );
+        return;
       }
-    } else {
-      await ctx.sendText(`❌ Unknown action: ${intentContent.actionId}`);
     }
-    return;
+    // No handler found, let other middlewares handle it
+    console.log(`   No handler registered, passing to next middleware`);
   }
   await next();
 };
