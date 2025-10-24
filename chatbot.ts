@@ -353,15 +353,30 @@ async function main(): Promise<void> {
     const text = ctx.message.content.trim();
     console.log("text", text);
     
+    const isGroup = ctx.isGroup();
+    const lowerText = text.toLowerCase();
+    
+    // In group chats, only respond to messages with /capy or @capy tags
+    // Exception: Allow /welcome and /info commands without tags
+    if (isGroup) {
+      const hasCapyTag = lowerText.includes("/capy") || lowerText.includes("@capy");
+      const isWelcomeCommand = lowerText === "/welcome";
+      const isInfoCommand = lowerText === "/info";
+      
+      if (!hasCapyTag && !isWelcomeCommand && !isInfoCommand) {
+        return;
+      }
+    }
+    
     // Handle /welcome command
-    if (text === "/welcome" || text.toLowerCase() === "/welcome") {
+    if (lowerText === "/welcome") {
       await sendWelcomeMessage(ctx);
       return;
     }
     
     // Handle /info command in groups
-    if (text === "/info" || text.toLowerCase() === "/info") {
-      if (ctx.isGroup()) {
+    if (lowerText === "/info") {
+      if (isGroup) {
         await showMainMenu(ctx);
         return;
       }
