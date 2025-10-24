@@ -290,16 +290,7 @@ export const pollActionProvider = () => {
     {
       name: "create_poll",
       description: `
-      This tool creates a new poll in an XMTP group.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID where this poll will be created
-      - question: The poll question (e.g., "Where should we go for dinner?")
-      - options: Array of poll options (2-10 options allowed)
-      - deadline: Deadline for voting in natural format (e.g., "2 hours", "3 days", "1 hour", "5 days"). Defaults to 24 hours if not specified.
-      - creatorInboxId: The inbox ID of the person creating the poll (use senderInboxId from the message context)
-      - creatorAddress: The Ethereum address of the person creating the poll (use senderAddress from the message context)
-      
+      This tool creates a new poll in an XMTP group.      
       Use this when users want to create a poll to gather opinions or make decisions.
       `,
       schema: CreatePollSchema,
@@ -309,16 +300,7 @@ export const pollActionProvider = () => {
       name: "vote_on_poll",
       description: `
       This tool records a vote for a poll option.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - pollId: The poll ID to vote on
-      - optionIndex: The index of the option to vote for (0-based)
-      - voterInboxId: The inbox ID of the person voting (use senderInboxId from the message context)
-      - voterAddress: The Ethereum address of the person voting (use senderAddress from the message context)
-      
       Use this when users want to vote on an existing poll using natural language.
-      Note: Users can also vote by clicking inline action buttons.
       `,
       schema: VoteOnPollSchema,
       invoke: voteOnPollAction,
@@ -327,18 +309,6 @@ export const pollActionProvider = () => {
       name: "get_poll_results",
       description: `
       This tool gets the current results of a poll.
-      
-      It takes the following inputs:
-      - groupId: The XMTP group ID
-      - pollId: The poll ID to get results for
-      
-      Returns:
-      - Poll details (question, options, deadline, status)
-      - Vote counts for each option
-      - Names of people who voted for each option
-      - Total number of voters
-      - Current winner(s) or ties
-      
       Use this when users want to see poll results or check voting status.
       `,
       schema: GetPollResultsSchema,

@@ -495,8 +495,8 @@ export const expenseSplitterActionProvider = () => {
       This tool gets comprehensive information about a tab including all expenses and current balances.
       Use this when users want to see expenses, check balances, or get a complete overview of a tab.
 
-      Output message to user:
-      - Simply report the 'message' field from the JSON response as is
+      Output message to user
+      - Critical: Report the 'message' field from the JSON response exactly as is!
       `,
       schema: GetTabInfoSchema,
       invoke: getTabInfo,
@@ -526,7 +526,7 @@ export const expenseSplitterActionProvider = () => {
       4. Returns transaction data that will be send to each payer to approve in their own wallet  
       
       Output message to user:
-      - Simply report the 'message' field from the JSON response as is
+      - Critical: Report the 'message' field from the JSON response exactly as is!
       `,
       schema: SettleExpensesSchema,
       invoke: settleExpenses,

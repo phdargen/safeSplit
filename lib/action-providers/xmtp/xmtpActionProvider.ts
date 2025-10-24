@@ -127,13 +127,6 @@ export const xmtpActionProvider = () => {
       description: `
       This tool retrieves comprehensive information about an XMTP group.
       
-      It takes the following inputs:
-      - groupId: The XMTP group ID to retrieve information for
-      
-      Returns:
-      - Group metadata (ID, name, creation date, member count, description)
-      - Complete list of all group members with their Ethereum addresses and inbox IDs
-      
       Use this when:
       - Users want to see who is in a group
       - Users need to know member addresses for other operations
@@ -145,21 +138,9 @@ export const xmtpActionProvider = () => {
     {
       name: "create_xmtp_group",
       description: `
-      This tool creates a new XMTP group chat with specified members.
-      
-      It takes the following inputs:
-      - groupName: The name of the group (REQUIRED)
-      - memberAddresses: Array of identifiers (Ethereum addresses, ENS names, or Basenames) for group members
-      - senderAddress: The Ethereum address of the message sender
-      - description: Optional description of the group
-      - imageUrl: Optional URL pointing to an image for the group
-      
+      This tool creates a new XMTP group chat with specified members.      
       The agent and sender are automatically added to the group.
-      Member identifiers can be:
-      - Ethereum addresses (e.g., "0x1234...")
-      - ENS names (e.g., "alice.eth")
-      - Basenames (names without .eth are automatically treated as Basenames - e.g., "alice" becomes "alice.base.eth")
-      
+
       Use this when:
       - Users want to create a new group chat
       - Users want to start a conversation with multiple people

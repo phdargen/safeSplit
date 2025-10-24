@@ -264,16 +264,16 @@ export async function updateSettlementTransaction(
   transaction.txHash = txHash;
   transaction.confirmedAt = Date.now();
 
-  // Check if this is the first confirmed transaction
+  // Check settlement completion status
   const confirmedCount = tab.currentSettlement.transactions.filter(t => t.status === "confirmed").length;
-  if (confirmedCount === 1 && tab.status === "settlement_proposed") {
-    // First transaction confirmed - move to settling
-    tab.status = "settling";
-    tab.currentSettlement.status = "in_progress";
-  } else if (confirmedCount === tab.currentSettlement.transactions.length) {
+  if (confirmedCount === tab.currentSettlement.transactions.length) {
     // All transactions confirmed - mark as settled
     tab.status = "settled";
     tab.currentSettlement.status = "completed";
+  } else if (confirmedCount === 1 && tab.status === "settlement_proposed") {
+    // First transaction confirmed (but more remaining) - move to settling
+    tab.status = "settling";
+    tab.currentSettlement.status = "in_progress";
   }
 
   // Save updated tab

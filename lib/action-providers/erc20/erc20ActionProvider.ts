@@ -173,11 +173,7 @@ export const erc20ActionProvider = () => {
       name: "get_erc20_token_address",
       description: `
       This tool will get the contract address for frequently used ERC20 tokens.
-      It takes the following input:
-      - symbol: The token symbol (e.g. USDC, EURC, CBBTC)
-      
-      Important notes:
-      - Use this tool when you need to find the contract address for a known token symbol
+      Use this tool when you need to find the contract address for a known token symbol.
       `,
       schema: GetTokenAddressSchema,
       invoke: getTokenAddress,
@@ -185,13 +181,9 @@ export const erc20ActionProvider = () => {
     {
       name: "get_erc20_balance",
       description: `
-      This tool gets the balance of an ERC20 token for a specific wallet address.
-      It takes the following inputs:
-      - tokenAddress: The contract address of the token to check
-      - address: The wallet address to check the balance for
-      
+      This tool gets the balance of an ERC20 token for a specific wallet address.  
       Important notes:
-      - The address parameter must be the user's wallet address
+      - The address parameter is typically the user's wallet address
       - Never assume token addresses, they must be provided as inputs
       `,
       schema: GetBalanceSchema,
@@ -201,12 +193,6 @@ export const erc20ActionProvider = () => {
       name: "prepare_erc20_transfer",
       description: `
       This tool prepares an ERC20 token transfer transaction for the user to approve with their wallet.
-      
-      It takes the following inputs:
-      - amount: The amount to transfer in whole units (e.g. 10.5 USDC)
-      - tokenAddress: The contract address of the token to transfer
-      - destinationAddress: The address to send the funds to
-      - userAddress: The user's wallet address that will sign the transaction
       
       Important notes:
       - This does NOT execute the transaction - it only prepares it

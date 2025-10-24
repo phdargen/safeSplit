@@ -43,8 +43,6 @@ export const walletActionProvider = () => {
       name: "get_eth_balance",
       description: `
       This tool gets the ETH (native currency) balance for a specific wallet address.
-      It takes the following input:
-      - address: The wallet address to check the ETH balance for
       
       Important notes:
       - The address parameter should typically be the user's wallet address
