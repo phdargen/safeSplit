@@ -1,7 +1,9 @@
 import { Hex, erc20Abi } from "viem";
 import { EvmWalletProvider } from "@coinbase/agentkit";
 
-// Permit2 contract address is the same across all networks
+// Note: Permit2 is no longer used - we now use AllowanceHolder pattern
+// The allowance target is dynamically returned by the API in issues.allowance.spender
+// @deprecated - Kept for reference only
 export const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 
 /**

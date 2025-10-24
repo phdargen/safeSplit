@@ -2,17 +2,14 @@ import { z } from "zod";
 import { customActionProvider, EvmWalletProvider } from "@coinbase/agentkit";
 import { GetSwapPriceSchema, PrepareSwapSchema } from "./schema";
 import { SwapTransactionPrepared } from "./types";
-import { getTokenDetails, PERMIT2_ADDRESS } from "./utils";
+import { getTokenDetails } from "./utils";
 import {
   erc20Abi,
   formatUnits,
   parseUnits,
   maxUint256,
   encodeFunctionData,
-  size,
-  concat,
   Hex,
-  numberToHex,
 } from "viem";
 
 /**
@@ -58,8 +55,8 @@ async function getSwapPrice(
     // Convert sell amount to base units
     const sellAmount = parseUnits(args.sellAmount, sellTokenDecimals).toString();
 
-    // Create URL for the price API request
-    const url = new URL("https://api.0x.org/swap/permit2/price");
+    // Create URL for the price API request (using AllowanceHolder)
+    const url = new URL("https://api.0x.org/swap/allowance-holder/price");
     url.searchParams.append("chainId", chainId.toString());
     url.searchParams.append("sellToken", args.sellToken);
     url.searchParams.append("buyToken", args.buyToken);
@@ -125,11 +122,11 @@ async function getSwapPrice(
 }
 
 /**
- * Prepares a token swap transaction for user approval.
+ * Prepares a token swap transaction for user approval using AllowanceHolder pattern.
  * Returns a JSON string with transaction data that must be parsed and converted
  * to WalletSendCalls format by the chatbot.
  *
- * @param walletProvider - The wallet provider (used for RPC access and signing permit2).
+ * @param walletProvider - The wallet provider (used for RPC access).
  * @param args - The input arguments for the action.
  * @param apiKey - The 0x API key.
  * @returns A JSON string containing the prepared transaction data.
@@ -156,8 +153,8 @@ async function prepareSwap(
     // Convert sell amount to base units
     const sellAmount = parseUnits(args.sellAmount, sellTokenDecimals).toString();
 
-    // Fetch price quote first
-    const priceUrl = new URL("https://api.0x.org/swap/permit2/price");
+    // Fetch price quote first (using AllowanceHolder)
+    const priceUrl = new URL("https://api.0x.org/swap/allowance-holder/price");
     priceUrl.searchParams.append("chainId", chainId.toString());
     priceUrl.searchParams.append("sellToken", args.sellToken);
     priceUrl.searchParams.append("buyToken", args.buyToken);
@@ -178,15 +175,12 @@ async function prepareSwap(
         "0x-version": "v2",
       },
     }) as Response;
-    console.log("priceResponse", priceResponse);
 
     if (!(priceResponse as any).ok) {
       const errorText = await (priceResponse as any).text();
       return `Error: Failed to fetch swap price: ${(priceResponse as any).status} ${(priceResponse as any).statusText} - ${errorText}`;
     }
-
     const priceData = await (priceResponse as any).json();
-    console.log("💰 Price data:", JSON.stringify(priceData, null, 2));
 
     // Check if liquidity is available
     if (priceData.liquidityAvailable === false) {
@@ -219,14 +213,16 @@ async function prepareSwap(
       slippageBps?: string;
     }> = [];
 
-    // Check if permit2 approval is needed for ERC20 tokens
+    // Check if AllowanceHolder approval is needed for ERC20 tokens
     let needsApproval = false;
     if (priceData.issues?.allowance) {
       needsApproval = true;
+      const allowanceTarget = priceData.issues.allowance.spender;
+      
       const approvalData = encodeFunctionData({
         abi: erc20Abi,
         functionName: "approve",
-        args: [PERMIT2_ADDRESS, maxUint256],
+        args: [allowanceTarget, maxUint256],
       });
 
       calls.push({
@@ -243,8 +239,8 @@ async function prepareSwap(
       });
     }
 
-    // Fetch the swap quote
-    const quoteUrl = new URL("https://api.0x.org/swap/permit2/quote");
+    // Fetch the swap quote (using AllowanceHolder)
+    const quoteUrl = new URL("https://api.0x.org/swap/allowance-holder/quote");
     quoteUrl.searchParams.append("chainId", chainId.toString());
     quoteUrl.searchParams.append("sellToken", args.sellToken);
     quoteUrl.searchParams.append("buyToken", args.buyToken);
@@ -265,7 +261,6 @@ async function prepareSwap(
         "0x-version": "v2",
       },
     }) as Response;
-    console.log("quoteResponse", quoteResponse);
 
     if (!(quoteResponse as any).ok) {
       const errorText = await (quoteResponse as any).text();
@@ -273,32 +268,9 @@ async function prepareSwap(
     }
 
     const quoteData = await (quoteResponse as any).json();
-    console.log("📝 Quote data:", JSON.stringify(quoteData, null, 2));
 
-    // Sign Permit2.eip712 if required
-    let transactionData = quoteData.transaction.data as Hex;
-    if (quoteData.permit2?.eip712) {
-      try {
-        const typedData = {
-          domain: quoteData.permit2.eip712.domain,
-          types: quoteData.permit2.eip712.types,
-          primaryType: quoteData.permit2.eip712.primaryType,
-          message: quoteData.permit2.eip712.message,
-        } as const;
-
-        const signature = await walletProvider.signTypedData(typedData);
-
-        // Append sig length and sig data to transaction.data
-        const signatureLengthInHex = numberToHex(size(signature), {
-          signed: false,
-          size: 32,
-        });
-
-        transactionData = concat([transactionData, signatureLengthInHex as Hex, signature]);
-      } catch (error) {
-        return `Error: Failed to sign permit2 message: ${error}`;
-      }
-    }
+    // With AllowanceHolder, no signature is required - just use the transaction data as-is
+    const transactionData = quoteData.transaction.data as Hex;
 
     // Add the swap transaction
     calls.push({
@@ -327,14 +299,6 @@ async function prepareSwap(
       slippageBps: args.slippageBps.toString(),
     });
 
-    console.log("🔧 Prepared calls:", JSON.stringify(calls, null, 2));
-    console.log("📊 Transaction details:", {
-      to: quoteData.transaction.to,
-      value: quoteData.transaction.value || "0",
-      dataLength: transactionData.length,
-      needsApproval,
-    });
-
     // Return structured response
     const description = `Swap ${args.sellAmount} ${sellTokenName} for ${buyAmountFormatted} ${buyTokenName}${needsApproval ? " (includes approval)" : ""}`;
     const response: SwapTransactionPrepared = {
@@ -343,8 +307,6 @@ async function prepareSwap(
       calls,
       metadata,
     };
-
-    console.log("✅ Final response to be returned:", JSON.stringify(response, null, 2));
 
     return JSON.stringify(response);
   } catch (error) {
@@ -397,7 +359,7 @@ export const zeroXActionProvider = (config?: ZeroXActionProviderConfig) => {
       
       Important notes:
       - The user must approve the transaction in their own wallet
-      - If needed, it will prepare an approval transaction for the permit2 contract
+      - If needed, it will prepare an approval transaction for the AllowanceHolder contract
       - The contract address for native ETH is "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
       - Use sellToken units exactly as provided, do not convert to wei or any other units
       - Never assume token addresses, they must be provided as inputs
