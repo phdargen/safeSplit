@@ -18,6 +18,10 @@ import {
   ContentTypeMarkdown,
   MarkdownCodec,
 } from "@xmtp/content-type-markdown";
+import {
+  AttachmentCodec,
+  RemoteAttachmentCodec,
+} from "@xmtp/content-type-remote-attachment";
 import type { TransactionPrepared, MultiTransactionPrepared, PollPrepared } from "./lib/action-providers";
 import { 
   initializeAgent, 
@@ -47,6 +51,7 @@ import {
   initializeExpenseMenuActions 
 } from "./utils/inline-actions/expense-menu";
 import { pollMiddleware } from "./utils/inline-actions/poll-middleware";
+import { sendWelcomeMessage, sendConversationWelcomeMessage } from "./lib/welcome-message";
 
 // Initialize environment variables
 dotenv.config();
@@ -295,7 +300,16 @@ async function main(): Promise<void> {
    
   const xmtpAgent = await XMTPAgent.createFromEnv({
     env: (process.env.XMTP_ENV as "local" | "dev" | "production") || "dev",
-    codecs: [new WalletSendCallsCodec(), new TransactionReferenceCodec(), new ReactionCodec(), new ActionsCodec(), new IntentCodec(), new MarkdownCodec()],
+    codecs: [
+      new WalletSendCallsCodec(),
+      new TransactionReferenceCodec(),
+      new ReactionCodec(),
+      new ActionsCodec(),
+      new IntentCodec(),
+      new MarkdownCodec(),
+      new RemoteAttachmentCodec(),
+      new AttachmentCodec(),
+    ],
     dbPath: customDbPath,
   });
   
@@ -307,9 +321,27 @@ async function main(): Promise<void> {
   xmtpAgent.use(inlineActionsMiddleware);
   xmtpAgent.use(pollMiddleware);
 
+  // Handle DM conversations
+  xmtpAgent.on("dm", async (ctx) => {
+    console.log("New DM conversation detected");
+    await sendConversationWelcomeMessage(ctx);
+  });
+
+  // Handle Group conversations
+  xmtpAgent.on("group", async (ctx) => {
+    console.log("New group conversation detected");
+    await sendConversationWelcomeMessage(ctx);
+  });
+
   // Handle all text messages
   xmtpAgent.on("text", async ctx => {
     const text = ctx.message.content.trim();
+    
+    // Handle /welcome command
+    if (text === "/welcome" || text.toLowerCase() === "/welcome") {
+      await sendWelcomeMessage(ctx);
+      return;
+    }
     
     // Handle /info command in groups
     if (text === "/info" || text.toLowerCase() === "/info") {
@@ -401,12 +433,7 @@ async function main(): Promise<void> {
     console.log(`📬 Agent Address:        ${xmtpAgent.address}`);
     console.log(`🔗 Chat with agent:      http://xmtp.chat/dm/${xmtpAgent.address}?env=${env}`);
     console.log("═".repeat(80));
-    console.log("\n💡 This agent prepares ERC20 transactions for users to approve with their own wallets.");
-    console.log("   Users maintain full control of their funds!\n");
-    console.log("🎯 Try these commands:");
-    console.log("   • Check my USDC balance");
-    console.log("   • Send 1 USDC to 0x...");
-    console.log("   • What's my wallet balance?\n");
+
     console.log("👂 Listening for messages...\n");
   });
 

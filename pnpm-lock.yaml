@@ -41,15 +41,24 @@ importers:
       '@xmtp/content-type-reaction':
         specifier: ^2.0.2
         version: 2.0.2
+      '@xmtp/content-type-remote-attachment':
+        specifier: ^2.0.2
+        version: 2.0.2
       '@xmtp/content-type-transaction-reference':
         specifier: ^2.0.2
         version: 2.0.2
       '@xmtp/content-type-wallet-send-calls':
         specifier: ^2.0.0
         version: 2.0.0
+      axios:
+        specifier: ^1.7.2
+        version: 1.12.2
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
+      form-data:
+        specifier: ^4.0.0
+        version: 4.0.4
       viem:
         specifier: ^2.38.3
         version: 2.38.3(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
